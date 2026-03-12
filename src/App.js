@@ -410,3 +410,15 @@ function StudentView() {
     </div>
   );
 }
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<TeacherView />} />
+        <Route path="/student" element={<StudentView />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+export default App;
