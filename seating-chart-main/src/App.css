@@ -103,6 +103,11 @@ textarea { width: 100%; border: 1.5px solid var(--border); border-radius: 12px; 
 .btn-close-auction { background: #ef4444; color: white; border: none; padding: 16px; border-radius: 16px; font-size: 1.2rem; font-weight: 800; cursor: pointer; margin-top: 1rem; }
 .btn-close-auction:hover { background: #dc2626; }
 
+
+
+
+
+
 /* =========================================
    추가된 디자인 (경매 컨트롤 및 학생용 모바일 화면)
 ========================================= */
