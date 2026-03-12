@@ -1,0 +1,134 @@
+:root {
+  --pri: #4f46e5; --bg: #f8fafc; --border: #e2e8f0;
+}
+
+.App { display: flex; height: 100vh; background: var(--bg); font-family: 'Pretendard', sans-serif; overflow: hidden; }
+
+/* 사이드바 */
+.sidebar { width: 320px; padding: 2rem 1.5rem; background: #fff; border-right: 1px solid var(--border); display: flex; flex-direction: column; z-index: 100; }
+.brand { font-size: 1.6rem; font-weight: 800; color: #1e293b; margin-bottom: 2rem; }
+.brand span { color: var(--pri); }
+
+.control-group { margin-bottom: 2rem; }
+.control-group label { display: block; font-size: 0.85rem; font-weight: 700; color: #64748b; margin-bottom: 0.8rem; }
+textarea { width: 100%; border: 1.5px solid var(--border); border-radius: 12px; padding: 1rem; font-size: 0.95rem; box-sizing: border-box; resize: none; }
+
+.row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
+.col { border: 1.5px solid var(--border); border-radius: 10px; padding: 8px 12px; display: flex; justify-content: space-between; align-items: center; }
+.col input { width: 45px; border: none; font-weight: 800; text-align: right; font-size: 1rem; color: var(--pri); background: transparent; }
+
+/* 링크 버튼 (포인트 현황) */
+.btn-link { display: block; text-align: center; background: #fef3c7; color: #d97706; text-decoration: none; padding: 12px; border-radius: 12px; font-weight: 800; border: 1.5px solid #fde68a; transition: 0.2s; }
+.btn-link:hover { background: #fde68a; }
+
+.btn-update, .btn-reset, .btn-shuffle, .btn-export { cursor: pointer; border: none; border-radius: 12px; font-weight: 700; transition: 0.2s; }
+.btn-update { width: 100%; padding: 12px; background: #f1f5f9; color: #475569; margin-top: 8px; }
+.btn-reset { width: 100%; padding: 12px; background: transparent; border: 2px dashed var(--border); color: #94a3b8; }
+.btn-shuffle { width: 100%; padding: 18px; background: var(--pri); color: #fff; font-size: 1.1rem; margin-top: auto; }
+.btn-export { width: 100%; padding: 14px; background: #1e293b; color: #fff; margin-top: 10px; }
+
+/* 캔버스 및 책상 */
+.classroom { flex: 1; position: relative; overflow: auto; background-image: radial-gradient(#e2e8f0 1.5px, transparent 1.5px); background-size: 40px 40px; }
+
+.desk {
+  position: absolute; background: #fff; border: 2.5px solid var(--border); display: flex; flex-direction: column; box-sizing: border-box; box-shadow: 0 10px 15px -3px rgba(0,0,0,0.05); cursor: move;
+}
+.desk.active { border-color: var(--pri); background: #f5f3ff; }
+.desk header { color: #94a3b8; font-weight: 700; display: flex; justify-content: space-between; align-items: center; }
+
+/* 경매 버튼 (책상 위) */
+.btn-auction-open { background: #f1f5f9; border: 1px solid #cbd5e1; border-radius: 6px; padding: 2px 6px; font-size: 0.7rem; color: #475569; cursor: pointer; font-weight: 800; transition: 0.2s; }
+.btn-auction-open:hover { background: var(--pri); color: white; border-color: var(--pri); }
+
+.student-sel { width: 100%; border: 1.5px solid #f1f5f9; background: #f8fafc; color: #64748b; cursor: pointer; }
+.name-tag { font-weight: 900; color: #1e293b; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: center; }
+.score-box { border: none; border-bottom: 2px solid var(--border); text-align: center; font-weight: 700; color: var(--pri); background: transparent; outline: none; display: block; margin: 0 auto; }
+
+.object { position: absolute; display: flex; align-items: center; justify-content: center; font-weight: 900; cursor: move; border-radius: 12px; box-shadow: 0 10px 25px -5px rgba(0,0,0,0.1); }
+.teacher-desk { width: 300px; height: 80px; background: #1e293b; color: #fff; font-size: 1.5rem; }
+.window-pane { width: 60px; height: 450px; background: #e0f2fe; border: 3px solid #38bdf8; color: #0369a1; writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 0.5rem; font-size: 1.2rem; }
+.door-way { width: 60px; height: 450px; background: #f8fafc; border: 3px dashed #94a3b8; color: #475569; writing-mode: vertical-rl; text-orientation: upright; letter-spacing: 0.5rem; font-size: 1.2rem; }
+
+
+/* =========================================
+   경매 팝업 모달 디자인 (새로 추가됨)
+========================================= */
+.auction-overlay {
+  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
+  background: rgba(15, 23, 42, 0.6); backdrop-filter: blur(5px);
+  display: flex; align-items: center; justify-content: center; z-index: 1000;
+  animation: fadeIn 0.2s ease-out;
+}
+
+.auction-modal {
+  background: white; width: 500px; border-radius: 24px; padding: 2rem;
+  box-shadow: 0 25px 50px -12px rgba(0,0,0,0.3);
+  display: flex; flex-direction: column; gap: 1.5rem;
+}
+
+.auction-title { font-size: 1.8rem; font-weight: 900; color: #1e293b; text-align: center; margin: 0; }
+
+.bid-section { background: #f8fafc; border-radius: 16px; padding: 1.5rem; text-align: center; border: 2px solid #e2e8f0; }
+.bid-label { font-size: 0.9rem; font-weight: 700; color: #64748b; display: block; margin-bottom: 0.5rem; }
+.bid-amount { font-size: 3rem; font-weight: 900; color: var(--pri); letter-spacing: -0.05rem; margin-bottom: 1rem; }
+
+.bid-controls { display: flex; justify-content: center; gap: 10px; }
+.bid-controls button {
+  background: white; border: 2px solid #cbd5e1; border-radius: 10px; padding: 10px 15px;
+  font-size: 1rem; font-weight: 800; color: #334155; cursor: pointer; transition: 0.2s;
+}
+.bid-controls button:hover { border-color: var(--pri); color: var(--pri); transform: translateY(-2px); }
+.bid-controls button.reset-bid { border-color: #fca5a5; color: #ef4444; }
+
+.timer-section { display: flex; flex-direction: column; align-items: center; gap: 10px; }
+.timer-display { font-size: 4rem; font-weight: 900; color: #94a3b8; line-height: 1; transition: color 0.3s; }
+.timer-display.running { color: #f59e0b; animation: pulse 1s infinite; }
+.timer-display.ended { color: #10b981; font-size: 2.5rem; padding: 15px 0; }
+
+@keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.1); } 100% { transform: scale(1); } }
+
+.btn-timer { background: #1e293b; color: white; border: none; padding: 12px 24px; border-radius: 12px; font-size: 1.1rem; font-weight: 800; cursor: pointer; transition: 0.2s; }
+.btn-timer:hover:not(:disabled) { background: #0f172a; transform: scale(1.05); }
+.btn-timer:disabled { background: #cbd5e1; cursor: not-allowed; }
+
+.participants-section p { font-size: 0.85rem; font-weight: 700; color: #64748b; margin-bottom: 10px; text-align: center; }
+.participant-tags { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center; }
+.tag {
+  background: #f1f5f9; border: 2px solid transparent; color: #475569;
+  padding: 8px 14px; border-radius: 20px; font-size: 0.9rem; font-weight: 700; cursor: pointer; transition: 0.2s;
+}
+.tag:hover { background: #e2e8f0; }
+.tag.selected { background: #eff6ff; border-color: var(--pri); color: var(--pri); }
+
+.btn-close-auction { background: #ef4444; color: white; border: none; padding: 16px; border-radius: 16px; font-size: 1.2rem; font-weight: 800; cursor: pointer; margin-top: 1rem; }
+.btn-close-auction:hover { background: #dc2626; }
+
+/* =========================================
+   추가된 디자인 (경매 컨트롤 및 학생용 모바일 화면)
+========================================= */
+
+.btn-auction-start { width: 100%; padding: 18px; background: #ef4444; color: white; border: none; border-radius: 12px; font-size: 1.1rem; font-weight: 800; cursor: pointer; box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3); transition: 0.2s; }
+.btn-auction-start:hover { background: #dc2626; transform: translateY(-2px); }
+
+.btn-auction-end { width: 100%; padding: 18px; background: #10b981; color: white; border: none; border-radius: 12px; font-size: 1.1rem; font-weight: 800; cursor: pointer; box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3); transition: 0.2s; }
+.btn-auction-end:hover { background: #059669; }
+
+/* 학생용 로그인 화면 */
+.student-login { display: flex; flex-direction: column; align-items: center; justify-content: center; height: 100vh; background: #f8fafc; padding: 20px; }
+.student-login h2 { font-size: 2rem; color: #1e293b; margin-bottom: 2rem; }
+.student-login input { width: 100%; max-width: 300px; padding: 15px; font-size: 1.2rem; border: 2px solid #cbd5e1; border-radius: 12px; margin-bottom: 1rem; text-align: center; }
+.student-login button { width: 100%; max-width: 300px; padding: 15px; background: #4f46e5; color: white; border: none; border-radius: 12px; font-size: 1.2rem; font-weight: 800; cursor: pointer; }
+
+/* 학생용 모바일 앱 화면 */
+.student-app { display: flex; flex-direction: column; height: 100vh; background: #f1f5f9; }
+.student-header { background: #1e293b; color: white; padding: 15px 20px; display: flex; justify-content: space-between; align-items: center; font-size: 1rem; position: sticky; top: 0; z-index: 10; }
+.status-badge { background: #f59e0b; color: white; padding: 5px 10px; border-radius: 20px; font-size: 0.8rem; font-weight: 800; }
+
+.student-grid { display: grid; gap: 10px; padding: 15px; overflow-y: auto; }
+.student-desk { background: white; border: 2px solid #cbd5e1; border-radius: 12px; padding: 15px; text-align: center; box-shadow: 0 4px 6px -1px rgba(0,0,0,0.05); cursor: pointer; transition: 0.2s; }
+.student-desk:active { transform: scale(0.95); }
+.student-desk.my-seat { border-color: #4f46e5; background: #eef2ff; } /* 내가 1등인 자리 */
+
+.s-desk-num { font-size: 0.8rem; color: #94a3b8; font-weight: 700; margin-bottom: 5px; }
+.s-desk-name { font-size: 1.2rem; font-weight: 900; color: #1e293b; margin-bottom: 5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.s-desk-bid { font-size: 1.1rem; font-weight: 800; color: #ef4444; }
