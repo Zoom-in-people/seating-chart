@@ -178,24 +178,21 @@ function StudentView() {
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
 
-  // [추가됨] 학생의 현재 보유 포인트 상태
   const [myPoints, setMyPoints] = useState(0);
 
-  // 🚨 여기에 선생님의 Stein API URL을 넣어주세요! (따옴표 유지)
+  // 🚨 여기에 선생님의 Stein API URL을 넣어주세요! (맨 끝이 status 여야 합니다)
   const STEIN_URL = "https://api.steinhq.com/v1/storages/69a6fb04affba40a625861dd/status";
 
- // [추가됨] Stein에서 포인트 불러오기 함수
   const fetchMyPoints = async (name) => {
     try {
       const response = await fetch(STEIN_URL);
       const data = await response.json();
       
-      // 💡 "이름" 열에서 학생을 찾고, "잔액" 열의 값을 가져옵니다.
+      // 구글 시트의 헤더에 맞게 "이름"과 "잔액"을 사용합니다.
       const studentData = data.find(row => row["이름"] === name);
       
       if (studentData) {
-        // "포인트"를 "잔액"으로 변경했습니다!
-        setMyPoints(Number(studentData["잔액"])); 
+        setMyPoints(Number(studentData["잔액"]));
       } else {
         console.warn("명단에 없는 이름이거나 포인트 데이터가 없습니다.");
         setMyPoints(0);
@@ -212,7 +209,7 @@ function StudentView() {
       setRealName(savedName);
       setNickname(savedNick);
       setIsJoined(true);
-      fetchMyPoints(savedName); // 새로고침 시 포인트 다시 불러오기
+      fetchMyPoints(savedName);
     }
 
     const dbRef = ref(db, '/');
@@ -238,9 +235,7 @@ function StudentView() {
     localStorage.setItem('student_realName', realName);
     localStorage.setItem('student_nickname', newNick);
     
-    // 입장할 때 포인트 불러오기
     fetchMyPoints(realName);
-    
     alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
   };
 
@@ -250,13 +245,11 @@ function StudentView() {
     setTempBid(seat.bid === 900 ? 1000 : seat.bid + 100);
   };
 
-  // [수정됨] 입찰 확정 시 포인트 초과 검사 로직 추가
   const confirmBid = () => {
     if (tempBid <= biddingSeat.bid && biddingSeat.bid !== 900) {
       return alert("현재 입찰가보다 높은 금액을 제시해야 합니다!");
     }
     
-    // 🚨 포인트 초과 방지 로직
     if (tempBid > myPoints) {
       return alert(`보유 포인트가 부족합니다! (현재 잔여: ${myPoints}P)`);
     }
@@ -292,7 +285,6 @@ function StudentView() {
   return (
     <div className="student-app">
       <div className="student-header">
-        {/* [수정됨] 헤더에 보유 포인트 표시 */}
         <div style={{ lineHeight: '1.4' }}>
           <div>내 암호명: <strong>{nickname}</strong></div>
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
@@ -323,7 +315,6 @@ function StudentView() {
             <div className="bid-section" style={{ padding: '1rem', marginTop: '10px' }}>
               <span className="bid-label">내가 베팅할 금액 (보유: {myPoints}P)</span>
               
-              {/* 내가 베팅할 금액이 내 포인트보다 크면 빨간색으로 경고 표시 */}
               <div className="bid-amount" style={{ fontSize: '3rem', color: tempBid > myPoints ? '#ef4444' : '#4f46e5', fontWeight: '900' }}>
                 {tempBid} P
               </div>
@@ -352,3 +343,17 @@ function StudentView() {
     </div>
   );
 }
+
+// 🚨🚨 가장 중요한 마지막 라우팅 및 내보내기 부분입니다! 절대 지우지 마세요! 🚨🚨
+function App() {
+  return (
+    <BrowserRouter>
+      <Routes>
+        <Route path="/" element={<TeacherView />} />
+        <Route path="/student" element={<StudentView />} />
+      </Routes>
+    </BrowserRouter>
+  );
+}
+
+export default App;
