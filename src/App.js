@@ -164,7 +164,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (+ 다중 입찰 방지 & 금액 누적)
+// 2. 학생용 스마트폰 화면 (+ Stein 포인트 연동 및 초과 방지)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -176,7 +176,34 @@ function StudentView() {
   const [auctionStatus, setAuctionStatus] = useState("waiting");
   
   const [biddingSeat, setBiddingSeat] = useState(null);
-  const [tempBid, setTempBid] = useState(0); // [추가] 모달 안에서 누적될 금액
+  const [tempBid, setTempBid] = useState(0);
+
+  // [추가됨] 학생의 현재 보유 포인트 상태
+  const [myPoints, setMyPoints] = useState(0);
+
+  // 🚨 여기에 선생님의 Stein API URL을 넣어주세요! (따옴표 유지)
+  const STEIN_URL = "https://api.steinhq.com/v1/storages/69a6fb04affba40a625861dd/status";
+
+ // [추가됨] Stein에서 포인트 불러오기 함수
+  const fetchMyPoints = async (name) => {
+    try {
+      const response = await fetch(STEIN_URL);
+      const data = await response.json();
+      
+      // 💡 "이름" 열에서 학생을 찾고, "잔액" 열의 값을 가져옵니다.
+      const studentData = data.find(row => row["이름"] === name);
+      
+      if (studentData) {
+        // "포인트"를 "잔액"으로 변경했습니다!
+        setMyPoints(Number(studentData["잔액"])); 
+      } else {
+        console.warn("명단에 없는 이름이거나 포인트 데이터가 없습니다.");
+        setMyPoints(0);
+      }
+    } catch (error) {
+      console.error("포인트를 불러오는데 실패했습니다.", error);
+    }
+  };
 
   useEffect(() => {
     const savedName = localStorage.getItem('student_realName');
@@ -185,6 +212,7 @@ function StudentView() {
       setRealName(savedName);
       setNickname(savedNick);
       setIsJoined(true);
+      fetchMyPoints(savedName); // 새로고침 시 포인트 다시 불러오기
     }
 
     const dbRef = ref(db, '/');
@@ -199,6 +227,7 @@ function StudentView() {
         }
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleJoin = () => {
@@ -208,25 +237,32 @@ function StudentView() {
     setIsJoined(true);
     localStorage.setItem('student_realName', realName);
     localStorage.setItem('student_nickname', newNick);
+    
+    // 입장할 때 포인트 불러오기
+    fetchMyPoints(realName);
+    
     alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
   };
 
   const openBidModal = (seat) => {
     if (auctionStatus !== 'active') return alert("현재 경매 진행 중이 아닙니다.");
     setBiddingSeat(seat);
-    // 팝업 열 때 현재 입찰가보다 100 높은 가격으로 시작 셋팅
     setTempBid(seat.bid === 900 ? 1000 : seat.bid + 100);
   };
 
-  // [핵심 변경] 입찰 확정 버튼을 눌렀을 때 실행되는 함수
+  // [수정됨] 입찰 확정 시 포인트 초과 검사 로직 추가
   const confirmBid = () => {
     if (tempBid <= biddingSeat.bid && biddingSeat.bid !== 900) {
       return alert("현재 입찰가보다 높은 금액을 제시해야 합니다!");
     }
+    
+    // 🚨 포인트 초과 방지 로직
+    if (tempBid > myPoints) {
+      return alert(`보유 포인트가 부족합니다! (현재 잔여: ${myPoints}P)`);
+    }
 
     const updates = {};
 
-    // 1. 기존에 내가 최고 입찰자인 자리가 있으면 900P로 초기화 (포기 처리)
     seats.forEach(seat => {
       if (seat.nickname === nickname && seat.id !== biddingSeat.id) {
         updates[`seats/${seat.id}/bid`] = 900;
@@ -235,13 +271,12 @@ function StudentView() {
       }
     });
 
-    // 2. 새로운 자리에 누적된 금액(tempBid)으로 입찰
     updates[`seats/${biddingSeat.id}/bid`] = tempBid;
     updates[`seats/${biddingSeat.id}/nickname`] = nickname;
     updates[`seats/${biddingSeat.id}/realName`] = realName;
 
     update(ref(db), updates);
-    setBiddingSeat(null); // 팝업 닫기
+    setBiddingSeat(null); 
   };
 
   if (!isJoined) {
@@ -257,9 +292,13 @@ function StudentView() {
   return (
     <div className="student-app">
       <div className="student-header">
-        <div>내 암호명: <strong>{nickname}</strong></div>
+        {/* [수정됨] 헤더에 보유 포인트 표시 */}
+        <div style={{ lineHeight: '1.4' }}>
+          <div>내 암호명: <strong>{nickname}</strong></div>
+          <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
+        </div>
         <div className="status-badge">
-          {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 경매 진행중' : '🛑 종료됨'}
+          {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
         </div>
       </div>
       
@@ -275,7 +314,6 @@ function StudentView() {
         ))}
       </div>
 
-      {/* --- 학생 입찰용 팝업 모달 (누적 및 확정 기능) --- */}
       {biddingSeat && (
         <div className="auction-overlay">
           <div className="auction-modal" style={{ width: '90%', maxWidth: '400px', padding: '1.5rem', textAlign: 'center' }}>
@@ -283,8 +321,12 @@ function StudentView() {
             <p style={{fontSize: '0.85rem', color: '#64748b', marginTop: '5px'}}>다른 자리를 선택하면 기존 입찰은 취소됩니다.</p>
             
             <div className="bid-section" style={{ padding: '1rem', marginTop: '10px' }}>
-              <span className="bid-label">내가 베팅할 금액 (원하는 만큼 누적하세요)</span>
-              <div className="bid-amount" style={{ fontSize: '3rem', color: '#4f46e5', fontWeight: '900' }}>{tempBid} P</div>
+              <span className="bid-label">내가 베팅할 금액 (보유: {myPoints}P)</span>
+              
+              {/* 내가 베팅할 금액이 내 포인트보다 크면 빨간색으로 경고 표시 */}
+              <div className="bid-amount" style={{ fontSize: '3rem', color: tempBid > myPoints ? '#ef4444' : '#4f46e5', fontWeight: '900' }}>
+                {tempBid} P
+              </div>
               
               <div className="bid-controls" style={{ marginTop: '15px', display: 'flex', gap: '8px', justifyContent: 'center' }}>
                 <button onClick={() => setTempBid(p => p + 100)} style={{ flex: 1, padding: '10px', fontSize: '1rem' }}>+ 100</button>
@@ -292,14 +334,13 @@ function StudentView() {
                 <button onClick={() => setTempBid(p => p + 1000)} style={{ flex: 1, padding: '10px', fontSize: '1rem' }}>+ 1000</button>
               </div>
               
-              {/* 리셋 버튼 (실수로 너무 많이 올렸을 때) */}
               <button onClick={() => setTempBid(biddingSeat.bid === 900 ? 1000 : biddingSeat.bid + 100)} style={{ marginTop: '10px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
                 금액 다시 입력하기
               </button>
             </div>
 
-            <button onClick={confirmBid} style={{ width: '100%', padding: '16px', background: '#4f46e5', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: '800', marginTop: '15px', cursor: 'pointer' }}>
-              ✅ {tempBid}P로 입찰 확정!
+            <button onClick={confirmBid} style={{ width: '100%', padding: '16px', background: tempBid > myPoints ? '#94a3b8' : '#4f46e5', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: '800', marginTop: '15px', cursor: tempBid > myPoints ? 'not-allowed' : 'pointer' }}>
+              {tempBid > myPoints ? "포인트 부족 🚫" : `✅ ${tempBid}P로 입찰 확정!`}
             </button>
             
             <button className="btn-close-auction" style={{ background: '#cbd5e1', color: '#334155', padding: '12px', marginTop: '10px', width: '100%', border: 'none', borderRadius: '12px', fontSize: '1rem', fontWeight: '700', cursor: 'pointer' }} onClick={() => setBiddingSeat(null)}>
@@ -311,16 +352,3 @@ function StudentView() {
     </div>
   );
 }
-
-function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<TeacherView />} />
-        <Route path="/student" element={<StudentView />} />
-      </Routes>
-    </BrowserRouter>
-  );
-}
-
-export default App;
