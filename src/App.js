@@ -6,12 +6,13 @@ import { db } from './firebase';
 import { ref, onValue, set, update } from "firebase/database";
 import './App.css';
 
+// --- 무작위 별명 생성기 ---
 const adjectives = ['붉은', '푸른', '춤추는', '용감한', '날쌘', '지혜로운', '신비한', '고독한', '즐거운', '빛나는'];
 const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래', '거북이', '고양이', '강아지', '여우'];
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 // ==========================================
-// 1. 선생님용 메인 화면 (+ 스마트 이미지 저장 기능)
+// 1. 선생님용 메인 화면
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -100,19 +101,17 @@ function TeacherView() {
     }
   };
 
-  // [새로 추가됨] 교탁과 끝 책상 기준 꽉 찬 화면 캡처 기능
+  // [수정됨] 하단 여백을 대폭 늘려서 글자 잘림 현상 완벽 해결!
   const handleExportImage = () => {
     const container = canvasRef.current;
     if (!container) return;
 
-    // 창문/복도 등 잉여 요소를 제외하고 '교탁'과 '학생 책상'들만 좌표 계산 대상에 포함
     const elements = container.querySelectorAll('.teacher-desk, .desk');
     if (elements.length === 0) return;
 
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     const containerRect = container.getBoundingClientRect();
 
-    // 1. 가장 상하좌우 끝에 있는 요소의 위치를 찾음
     elements.forEach(el => {
       const rect = el.getBoundingClientRect();
       const x = rect.left - containerRect.left + container.scrollLeft;
@@ -124,15 +123,17 @@ function TeacherView() {
       if (y + rect.height > maxY) maxY = y + rect.height;
     });
 
-    const padding = 50; // 사진 가장자리에 여백 50px을 줘서 답답하지 않게 조절
+    // 상좌우는 50px, 하단은 150px로 여유롭게 설정
+    const paddingX = 50;
+    const paddingTop = 50;
+    const paddingBottom = 150; 
 
-    // 2. 찾아낸 좌표만큼만 잘라서 고화질(scale:2)로 저장
     html2canvas(container, {
-      x: minX - padding,
-      y: minY - padding,
-      width: (maxX - minX) + padding * 2,
-      height: (maxY - minY) + padding * 2,
-      backgroundColor: '#f8fafc', // 투명 방지 기본 배경색
+      x: minX - paddingX,
+      y: minY - paddingTop,
+      width: (maxX - minX) + (paddingX * 2),
+      height: (maxY - minY) + paddingTop + paddingBottom,
+      backgroundColor: '#f8fafc',
       scale: 2 
     }).then(canvas => {
       const a = document.createElement('a');
@@ -171,7 +172,6 @@ function TeacherView() {
           <p className="hint" style={{marginTop:'10px'}}>* 접속 주소: 웹주소/student</p>
         </div>
 
-        {/* [새로 추가됨] 이미지 저장 버튼 (사이드바 맨 아래 고정) */}
         <footer className="footer-actions" style={{ marginTop: 'auto' }}>
           <button 
             onClick={handleExportImage} 
@@ -288,7 +288,6 @@ function StudentView() {
     alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
   };
 
-  // [새로 추가됨] 로그아웃 및 초기화 함수
   const handleLogout = () => {
     if (window.confirm("로그아웃 하시겠습니까? (현재 입찰 기록은 유지됩니다)")) {
       localStorage.removeItem('student_realName');
@@ -350,7 +349,6 @@ function StudentView() {
           <div>내 암호명: <strong>{nickname}</strong></div>
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
         </div>
-        {/* [새로 추가됨] 상태 뱃지와 로그아웃 버튼을 우측에 나란히 배치 */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
           <div className="status-badge">
             {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
@@ -410,6 +408,7 @@ function StudentView() {
     </div>
   );
 }
+
 function App() {
   return (
     <BrowserRouter>
