@@ -101,10 +101,16 @@ function TeacherView() {
     }
   };
 
-  // [수정됨] 하단 여백을 대폭 늘려서 글자 잘림 현상 완벽 해결!
+  // [핵심 변경] 전체 스크롤 영역 강제 캡처 기능
   const handleExportImage = () => {
     const container = canvasRef.current;
     if (!container) return;
+
+    // 1. 스크롤이 내려가 있으면 캡처가 어긋나므로 임시로 맨 위로 올림
+    const originalScrollTop = container.scrollTop;
+    const originalScrollLeft = container.scrollLeft;
+    container.scrollTop = 0;
+    container.scrollLeft = 0;
 
     const elements = container.querySelectorAll('.teacher-desk, .desk');
     if (elements.length === 0) return;
@@ -114,8 +120,8 @@ function TeacherView() {
 
     elements.forEach(el => {
       const rect = el.getBoundingClientRect();
-      const x = rect.left - containerRect.left + container.scrollLeft;
-      const y = rect.top - containerRect.top + container.scrollTop;
+      const x = rect.left - containerRect.left;
+      const y = rect.top - containerRect.top;
       
       if (x < minX) minX = x;
       if (y < minY) minY = y;
@@ -123,11 +129,18 @@ function TeacherView() {
       if (y + rect.height > maxY) maxY = y + rect.height;
     });
 
-    // 상좌우는 50px, 하단은 150px로 여유롭게 설정
     const paddingX = 50;
     const paddingTop = 50;
     const paddingBottom = 150; 
 
+    // 2. 숨겨진 영역까지 사진에 찍히도록 컨테이너 크기를 임시로 강제 확장!
+    const originalOverflow = container.style.overflow;
+    const originalHeight = container.style.height;
+    
+    container.style.overflow = 'visible';
+    container.style.height = `${maxY + paddingBottom}px`;
+
+    // 3. 캡처 실행
     html2canvas(container, {
       x: minX - paddingX,
       y: minY - paddingTop,
@@ -136,6 +149,12 @@ function TeacherView() {
       backgroundColor: '#f8fafc',
       scale: 2 
     }).then(canvas => {
+      // 4. 캡처 완료 즉시 원래 상태(스크롤 포함)로 완벽하게 복구
+      container.style.overflow = originalOverflow;
+      container.style.height = originalHeight;
+      container.scrollTop = originalScrollTop;
+      container.scrollLeft = originalScrollLeft;
+
       const a = document.createElement('a');
       a.download = '2-5반_자리배치도_완성.png';
       a.href = canvas.toDataURL('image/png');
