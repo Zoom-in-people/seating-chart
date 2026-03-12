@@ -6,13 +6,12 @@ import { db } from './firebase';
 import { ref, onValue, set, update } from "firebase/database";
 import './App.css';
 
-// --- 무작위 별명 생성기 ---
 const adjectives = ['붉은', '푸른', '춤추는', '용감한', '날쌘', '지혜로운', '신비한', '고독한', '즐거운', '빛나는'];
 const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래', '거북이', '고양이', '강아지', '여우'];
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 // ==========================================
-// 1. 선생님용 메인 화면
+// 1. 선생님용 메인 화면 (+ 스마트 이미지 저장 기능)
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -101,9 +100,51 @@ function TeacherView() {
     }
   };
 
+  // [새로 추가됨] 교탁과 끝 책상 기준 꽉 찬 화면 캡처 기능
+  const handleExportImage = () => {
+    const container = canvasRef.current;
+    if (!container) return;
+
+    // 창문/복도 등 잉여 요소를 제외하고 '교탁'과 '학생 책상'들만 좌표 계산 대상에 포함
+    const elements = container.querySelectorAll('.teacher-desk, .desk');
+    if (elements.length === 0) return;
+
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const containerRect = container.getBoundingClientRect();
+
+    // 1. 가장 상하좌우 끝에 있는 요소의 위치를 찾음
+    elements.forEach(el => {
+      const rect = el.getBoundingClientRect();
+      const x = rect.left - containerRect.left + container.scrollLeft;
+      const y = rect.top - containerRect.top + container.scrollTop;
+      
+      if (x < minX) minX = x;
+      if (y < minY) minY = y;
+      if (x + rect.width > maxX) maxX = x + rect.width;
+      if (y + rect.height > maxY) maxY = y + rect.height;
+    });
+
+    const padding = 50; // 사진 가장자리에 여백 50px을 줘서 답답하지 않게 조절
+
+    // 2. 찾아낸 좌표만큼만 잘라서 고화질(scale:2)로 저장
+    html2canvas(container, {
+      x: minX - padding,
+      y: minY - padding,
+      width: (maxX - minX) + padding * 2,
+      height: (maxY - minY) + padding * 2,
+      backgroundColor: '#f8fafc', // 투명 방지 기본 배경색
+      scale: 2 
+    }).then(canvas => {
+      const a = document.createElement('a');
+      a.download = '2-5반_자리배치도_완성.png';
+      a.href = canvas.toDataURL('image/png');
+      a.click();
+    });
+  };
+
   return (
     <div className="App">
-      <aside className="sidebar">
+      <aside className="sidebar" style={{ display: 'flex', flexDirection: 'column' }}>
         <header className="brand">자리배치 <span>Pro</span></header>
         
         <div className="control-group">
@@ -129,6 +170,16 @@ function TeacherView() {
           )}
           <p className="hint" style={{marginTop:'10px'}}>* 접속 주소: 웹주소/student</p>
         </div>
+
+        {/* [새로 추가됨] 이미지 저장 버튼 (사이드바 맨 아래 고정) */}
+        <footer className="footer-actions" style={{ marginTop: 'auto' }}>
+          <button 
+            onClick={handleExportImage} 
+            style={{ width: '100%', padding: '16px', background: '#1e293b', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.1rem', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}
+          >
+            📸 자리배치도 꽉 차게 저장
+          </button>
+        </footer>
       </aside>
 
       <main className="classroom" ref={canvasRef}>
@@ -164,7 +215,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (+ Stein 포인트 연동 및 초과 방지)
+// 2. 학생용 스마트폰 화면
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -177,10 +228,9 @@ function StudentView() {
   
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
-
   const [myPoints, setMyPoints] = useState(0);
 
-  // 🚨 여기에 선생님의 Stein API URL을 넣어주세요! (맨 끝이 status 여야 합니다)
+  // 🚨 여기에 선생님의 실제 Stein API URL을 넣어주세요! (맨 끝이 status 여야 합니다)
   const STEIN_URL = "https://api.steinhq.com/v1/storages/69a6fb04affba40a625861dd/status";
 
   const fetchMyPoints = async (name) => {
@@ -188,7 +238,6 @@ function StudentView() {
       const response = await fetch(STEIN_URL);
       const data = await response.json();
       
-      // 구글 시트의 헤더에 맞게 "이름"과 "잔액"을 사용합니다.
       const studentData = data.find(row => row["이름"] === name);
       
       if (studentData) {
@@ -239,6 +288,18 @@ function StudentView() {
     alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
   };
 
+  // [새로 추가됨] 로그아웃 및 초기화 함수
+  const handleLogout = () => {
+    if (window.confirm("로그아웃 하시겠습니까? (현재 입찰 기록은 유지됩니다)")) {
+      localStorage.removeItem('student_realName');
+      localStorage.removeItem('student_nickname');
+      setRealName("");
+      setNickname("");
+      setMyPoints(0);
+      setIsJoined(false);
+    }
+  };
+
   const openBidModal = (seat) => {
     if (auctionStatus !== 'active') return alert("현재 경매 진행 중이 아닙니다.");
     setBiddingSeat(seat);
@@ -284,13 +345,19 @@ function StudentView() {
 
   return (
     <div className="student-app">
-      <div className="student-header">
+      <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
         <div style={{ lineHeight: '1.4' }}>
           <div>내 암호명: <strong>{nickname}</strong></div>
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
         </div>
-        <div className="status-badge">
-          {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
+        {/* [새로 추가됨] 상태 뱃지와 로그아웃 버튼을 우측에 나란히 배치 */}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+          <div className="status-badge">
+            {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
+          </div>
+          <button onClick={handleLogout} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #94a3b8', borderRadius: '6px', fontSize: '0.75rem', padding: '4px 8px', cursor: 'pointer' }}>
+            로그아웃
+          </button>
         </div>
       </div>
       
@@ -343,17 +410,3 @@ function StudentView() {
     </div>
   );
 }
-
-// 🚨🚨 가장 중요한 마지막 라우팅 및 내보내기 부분입니다! 절대 지우지 마세요! 🚨🚨
-function App() {
-  return (
-    <BrowserRouter>
-      <Routes>
-        <Route path="/" element={<TeacherView />} />
-        <Route path="/student" element={<StudentView />} />
-      </Routes>
-    </BrowserRouter>
-  );
-}
-
-export default App;
