@@ -234,7 +234,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면
+// 2. 학생용 스마트폰 화면 (GAS 연동)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -249,15 +249,17 @@ function StudentView() {
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
 
-  // 🚨 여기에 선생님의 실제 Stein API URL을 넣어주세요! (맨 끝이 status 여야 합니다)
-  const STEIN_URL = "https://api.steinhq.com/v1/storages/69a6fb04affba40a625861dd/status";
+  // 선생님이 주신 구글 앱스 스크립트(GAS) 주소 적용 완료!
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec";
 
   const fetchMyPoints = async (name) => {
     try {
-      const response = await fetch(STEIN_URL);
+      const response = await fetch(GAS_URL);
       const data = await response.json();
       
-      const studentData = data.find(row => row["이름"] === name);
+      // 구글 앱스 스크립트가 { data: [...] } 형태나 직접적인 배열 [...] 로 반환할 경우 모두 대비
+      const dataArray = Array.isArray(data) ? data : (data.data || []);
+      const studentData = dataArray.find(row => row["이름"] === name);
       
       if (studentData) {
         setMyPoints(Number(studentData["잔액"]));
@@ -266,7 +268,7 @@ function StudentView() {
         setMyPoints(0);
       }
     } catch (error) {
-      console.error("포인트를 불러오는데 실패했습니다.", error);
+      console.error("포인트를 불러오는데 실패했습니다. 구글 앱스 스크립트 설정을 확인하세요.", error);
     }
   };
 
