@@ -23,13 +23,10 @@ function TeacherView() {
 
   const canvasRef = useRef(null);
   const teacherRef = useRef(null);
-  const windowRef = useRef(null);
-  const aisleRef = useRef(null);
 
   const scale = Math.min(1.2, 4 / (cols || 1)); 
   const deskWidth = 220 * scale;
   const deskHeight = 150 * scale;
-  const gapX = 300 * scale;
 
   useEffect(() => {
     const dbRef = ref(db, '/');
@@ -101,12 +98,10 @@ function TeacherView() {
     }
   };
 
-  // [핵심 변경] 전체 스크롤 영역 강제 캡처 기능
   const handleExportImage = () => {
     const container = canvasRef.current;
     if (!container) return;
 
-    // 1. 스크롤이 내려가 있으면 캡처가 어긋나므로 임시로 맨 위로 올림
     const originalScrollTop = container.scrollTop;
     const originalScrollLeft = container.scrollLeft;
     container.scrollTop = 0;
@@ -133,14 +128,12 @@ function TeacherView() {
     const paddingTop = 50;
     const paddingBottom = 150; 
 
-    // 2. 숨겨진 영역까지 사진에 찍히도록 컨테이너 크기를 임시로 강제 확장!
     const originalOverflow = container.style.overflow;
     const originalHeight = container.style.height;
     
     container.style.overflow = 'visible';
     container.style.height = `${maxY + paddingBottom}px`;
 
-    // 3. 캡처 실행
     html2canvas(container, {
       x: minX - paddingX,
       y: minY - paddingTop,
@@ -149,7 +142,6 @@ function TeacherView() {
       backgroundColor: '#f8fafc',
       scale: 2 
     }).then(canvas => {
-      // 4. 캡처 완료 즉시 원래 상태(스크롤 포함)로 완벽하게 복구
       container.style.overflow = originalOverflow;
       container.style.height = originalHeight;
       container.scrollTop = originalScrollTop;
@@ -234,7 +226,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (GAS 연동)
+// 2. 학생용 스마트폰 화면 (GAS 연동 초강력 보정 버전)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -249,7 +241,7 @@ function StudentView() {
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
 
-  // 선생님이 주신 구글 앱스 스크립트(GAS) 주소 적용 완료!
+  // 🚨 여기에 선생님의 실제 URL을 확인해서 넣어주세요! (?type=status 필수!)
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
   const fetchMyPoints = async (name) => {
@@ -257,18 +249,30 @@ function StudentView() {
       const response = await fetch(GAS_URL);
       const data = await response.json();
       
-      // 구글 앱스 스크립트가 { data: [...] } 형태나 직접적인 배열 [...] 로 반환할 경우 모두 대비
       const dataArray = Array.isArray(data) ? data : (data.data || []);
-      const studentData = dataArray.find(row => row["이름"] === name);
+      
+      // 💡 [초강력 보정 1] 학생이 입력한 이름에서 공백 완전 제거 ("김 철수" -> "김철수")
+      const targetName = name.replace(/\s+/g, '');
+      
+      const studentData = dataArray.find(row => {
+        // 시트의 '이름' 열에 띄어쓰기가 있어도 무시하고 일치하는지 검사
+        const sheetName = String(row["이름"] || "").replace(/\s+/g, '');
+        return sheetName === targetName;
+      });
       
       if (studentData) {
-        setMyPoints(Number(studentData["잔액"]));
+        // 💡 [초강력 보정 2] 잔액에 쉼표나 문자가 섞여있어도 숫자만 쏙 빼내기 ("1,500" -> 1500)
+        const pointString = String(studentData["잔액"] || "0");
+        const cleanPoint = Number(pointString.replace(/[^0-9-]/g, ''));
+        setMyPoints(cleanPoint);
       } else {
         console.warn("명단에 없는 이름이거나 포인트 데이터가 없습니다.");
         setMyPoints(0);
       }
     } catch (error) {
-      console.error("포인트를 불러오는데 실패했습니다. 구글 앱스 스크립트 설정을 확인하세요.", error);
+      console.error("포인트를 불러오는데 실패했습니다.", error);
+      // 권한 에러 시 스마트폰 화면에 원인 알림창 띄우기
+      alert("⚠️ 잔액 데이터를 불러오지 못했습니다. 선생님께 구글 스크립트 '권한 설정'을 확인해달라고 말씀드리세요!");
     }
   };
 
