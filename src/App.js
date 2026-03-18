@@ -250,7 +250,7 @@ function StudentView() {
   const [myPoints, setMyPoints] = useState(0);
 
   // 선생님이 주신 구글 앱스 스크립트(GAS) 주소 적용 완료!
-  const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec";
+  const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
   const fetchMyPoints = async (name) => {
     try {
