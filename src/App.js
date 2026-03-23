@@ -3,7 +3,8 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Draggable from 'react-draggable';
 import html2canvas from 'html2canvas';
 import { db } from './firebase';
-import { ref, onValue, set, update } from "firebase/database";
+// [수정됨] get, onDisconnect, remove 등 중복 방지를 위한 파이어베이스 기능 추가
+import { ref, onValue, set, update, get, onDisconnect, remove } from "firebase/database";
 import './App.css';
 
 // --- 무작위 별명 생성기 ---
@@ -12,7 +13,7 @@ const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래',
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 // ==========================================
-// 1. 선생님용 메인 화면 (변경 사항 없음)
+// 1. 선생님용 메인 화면 (+ 랜덤 배치 버튼 추가)
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -79,8 +80,9 @@ function TeacherView() {
     }
   };
 
+  // [수정됨] 경매 시작 시 기존 접속 유저(중복 방지용) 리스트도 싹 초기화합니다.
   const handleStartAuction = () => {
-    if (window.confirm("블라인드 경매를 시작합니까? 모든 자리가 900P로 초기화됩니다.")) {
+    if (window.confirm("블라인드 경매를 시작합니까?\n\n(모든 자리가 900P로 초기화되며, 튕긴 학생들을 위해 접속 기록도 초기화됩니다.)")) {
       const updates = {};
       for (let i = 0; i < seatCount; i++) {
         updates[`seats/${i}/bid`] = 900;
@@ -88,6 +90,7 @@ function TeacherView() {
         updates[`seats/${i}/realName`] = '';
       }
       updates['status'] = 'active';
+      updates['activeUsers'] = null; // 중복 접속 방지 리스트 초기화
       update(ref(db), updates);
     }
   };
@@ -95,6 +98,47 @@ function TeacherView() {
   const handleEndAuction = () => {
     if (window.confirm("경매를 종료하고 학생들의 진짜 이름을 공개하시겠습니까?")) {
       set(ref(db, 'status'), 'ended');
+    }
+  };
+
+  // 💡 [새로 추가됨] 남은 학생 랜덤 배치 기능
+  const handleRandomAssign = () => {
+    if (window.confirm("경매에 참여하지 않은 학생들을 빈 자리에 랜덤으로 배치하시겠습니까?")) {
+      // 1. 전체 학생 명단 배열 만들기
+      const allNames = studentInput.split(/[,\n]+/).map(n => n.trim()).filter(n => n);
+      // 2. 이미 자리를 잡은 학생 명단 배열
+      const assignedNames = seats.map(s => s.realName).filter(n => n);
+      // 3. 자리를 못 잡은 남은 학생 명단 배열
+      const unassignedNames = allNames.filter(n => !assignedNames.includes(n));
+      // 4. 비어있는 자리 배열 (랜덤 배치 전용 표시인 0도 섞이지 않게 900일때만)
+      const emptySeats = seats.filter(s => s.bid === 900 || s.realName === "");
+
+      if (unassignedNames.length === 0) {
+        return alert("배치할 남은 학생이 없습니다! (명단의 모든 학생이 자리에 있습니다)");
+      }
+      if (emptySeats.length === 0) {
+        return alert("남은 빈 자리가 없습니다!");
+      }
+
+      // 남은 학생 섞기
+      const shuffled = [...unassignedNames].sort(() => Math.random() - 0.5);
+      const updates = {};
+      let assignCount = 0;
+
+      for (let i = 0; i < emptySeats.length; i++) {
+        if (i < shuffled.length) {
+          const seatId = emptySeats[i].id;
+          updates[`seats/${seatId}/bid`] = 0; // 랜덤 배치의 식별표시를 0P로 함
+          updates[`seats/${seatId}/nickname`] = "🎲 랜덤배치";
+          updates[`seats/${seatId}/realName`] = shuffled[i];
+          assignCount++;
+        }
+      }
+
+      if (assignCount > 0) {
+        update(ref(db), updates);
+        alert(`${assignCount}명의 학생이 빈 자리에 랜덤으로 배치되었습니다!`);
+      }
     }
   };
 
@@ -180,6 +224,15 @@ function TeacherView() {
           ) : (
             <button className="btn-auction-end" onClick={handleEndAuction}>🛑 경매 종료 및 정체 공개!</button>
           )}
+          
+          {/* 💡 [새로 추가됨] 랜덤 배치 버튼 */}
+          <button 
+            onClick={handleRandomAssign} 
+            style={{ width: '100%', padding: '16px', background: '#8b5cf6', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.1rem', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(139, 92, 246, 0.3)', marginTop: '10px' }}
+          >
+            🎲 남은 학생 랜덤 배치
+          </button>
+          
           <p className="hint" style={{marginTop:'10px'}}>* 접속 주소: 웹주소/student</p>
         </div>
 
@@ -205,7 +258,7 @@ function TeacherView() {
             position={{x: seat.x, y: seat.y}}
             onStop={(e, data) => handleStop(seat.id, e, data)}
           >
-            <div ref={seat.nodeRef} className={`desk ${seat.bid > 900 ? 'active' : ''}`} style={{ width: `${deskWidth}px`, height: `${deskHeight}px`, padding: `${15 * scale}px`, borderRadius: `${20 * scale}px` }}>
+            <div ref={seat.nodeRef} className={`desk ${seat.bid !== 900 ? 'active' : ''}`} style={{ width: `${deskWidth}px`, height: `${deskHeight}px`, padding: `${15 * scale}px`, borderRadius: `${20 * scale}px` }}>
               <header style={{ fontSize: `${0.8 * scale}rem`, marginBottom: `${8 * scale}px` }}>
                 좌석 #{seat.id + 1}
               </header>
@@ -214,7 +267,8 @@ function TeacherView() {
                   {seat.bid === 900 ? "빈 자리" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
                 </div>
                 <div className="score-box" style={{ fontSize: `${1.1 * scale}rem`, width: '100%', marginTop: `${15 * scale}px` }}>
-                  {seat.bid} P
+                  {/* 0P면 랜덤배치로 표시되게 처리 */}
+                  {seat.bid === 900 ? "900 P" : (seat.bid === 0 ? "랜덤 배치" : seat.bid + " P")}
                 </div>
               </div>
             </div>
@@ -226,7 +280,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (+ 진짜 이름 표시 및 꽉 찬 화면 비율 조정)
+// 2. 학생용 스마트폰 화면 (+ 중복 로그인 방지)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -241,7 +295,7 @@ function StudentView() {
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
 
-  // 선생님의 구글 스크립트 주소
+  // 선생님의 구글 스크립트 주소 (유지됨)
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
   const fetchMyPoints = async (name) => {
@@ -267,7 +321,6 @@ function StudentView() {
       }
     } catch (error) {
       console.error("포인트를 불러오는데 실패했습니다.", error);
-      alert("⚠️ 잔액 데이터를 불러오지 못했습니다. 선생님께 스크립트 권한을 확인해달라고 말씀드리세요!");
     }
   };
 
@@ -296,20 +349,46 @@ function StudentView() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleJoin = () => {
-    if (!realName.trim()) return alert("이름을 입력해주세요!");
-    const newNick = generateNickname();
-    setNickname(newNick);
-    setIsJoined(true);
-    localStorage.setItem('student_realName', realName);
-    localStorage.setItem('student_nickname', newNick);
-    
-    fetchMyPoints(realName);
-    alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
+  // 💡 [수정됨] 이름 중복 접속 방지 로직이 추가된 입장 함수
+  const handleJoin = async () => {
+    const trimmedName = realName.trim();
+    if (!trimmedName) return alert("이름을 입력해주세요!");
+
+    try {
+      // 1. 파이어베이스의 activeUsers(접속자 명단)에서 내 이름이 있는지 확인
+      const userRef = ref(db, `activeUsers/${trimmedName}`);
+      const snapshot = await get(userRef);
+      
+      if (snapshot.exists()) {
+        return alert(`'${trimmedName}' 학생은 이미 접속 중입니다!\n\n(만약 튕겨서 다시 들어온 거라면 선생님께 '경매 시작' 버튼을 눌러 초기화해 달라고 요청하세요.)`);
+      }
+
+      // 2. 접속자 명단에 내 이름 추가 및 앱을 끄면 자동으로 명단에서 삭제되도록 세팅
+      await set(userRef, true);
+      onDisconnect(userRef).remove();
+
+      const newNick = generateNickname();
+      setNickname(newNick);
+      setIsJoined(true);
+      localStorage.setItem('student_realName', trimmedName);
+      localStorage.setItem('student_nickname', newNick);
+      
+      fetchMyPoints(trimmedName);
+      alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
+    } catch (error) {
+      console.error("로그인 중 에러 발생:", error);
+      alert("서버 연결에 실패했습니다.");
+    }
   };
 
-  const handleLogout = () => {
+  // 💡 [수정됨] 로그아웃 시 접속자 명단에서 이름 제거
+  const handleLogout = async () => {
     if (window.confirm("로그아웃 하시겠습니까? (현재 입찰 기록은 유지됩니다)")) {
+      const savedName = localStorage.getItem('student_realName');
+      if (savedName) {
+        await remove(ref(db, `activeUsers/${savedName}`));
+      }
+      
       localStorage.removeItem('student_realName');
       localStorage.removeItem('student_nickname');
       setRealName("");
@@ -321,6 +400,8 @@ function StudentView() {
 
   const openBidModal = (seat) => {
     if (auctionStatus !== 'active') return alert("현재 경매 진행 중이 아닙니다.");
+    if (seat.bid === 0) return alert("선생님께서 랜덤으로 배치 완료한 자리는 빼앗을 수 없습니다!");
+    
     setBiddingSeat(seat);
     setTempBid(seat.bid === 900 ? 1000 : seat.bid + 100);
   };
@@ -362,7 +443,6 @@ function StudentView() {
     );
   }
 
-  // 💡 [화면 비율 계산 마법] 책상 개수에 따라 글자와 여백을 자동으로 줄여서 화면에 쏙 들어가게 만듭니다!
   const totalSeats = seats.length || 24;
   const rows = Math.ceil(totalSeats / (cols || 4)) || 1;
   const scaleMob = Math.min(1.2, 6 / rows, 4 / (cols || 4));
@@ -371,7 +451,6 @@ function StudentView() {
     <div className="student-app" style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
       <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 15px', flexShrink: 0 }}>
         <div style={{ lineHeight: '1.4' }}>
-          {/* 💡 [수정 1] 내 암호명 옆에 내 진짜 이름을 연한 글씨로 표시합니다. */}
           <div>내 암호명: <strong>{nickname}</strong> <span style={{fontSize: '0.8rem', fontWeight: 'normal', color: '#cbd5e1'}}>({realName})</span></div>
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
         </div>
@@ -385,7 +464,6 @@ function StudentView() {
         </div>
       </div>
       
-      {/* 💡 [수정 2] 화면 높이에 맞춰 격자(Grid) 크기를 100% 꽉 채우고 스크롤을 막았습니다. */}
       <div style={{ flexGrow: 1, display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, gap: `${6 * scaleMob}px`, padding: `${10 * scaleMob}px`, overflow: 'hidden', boxSizing: 'border-box' }}>
         {seats.map((seat) => (
           <div key={seat.id} className={`student-desk ${seat.nickname === nickname ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
@@ -393,16 +471,16 @@ function StudentView() {
             <div className="s-desk-num" style={{ fontSize: `${0.7 * scaleMob}rem`, marginBottom: `${2 * scaleMob}px` }}>#{seat.id + 1}</div>
             
             <div className="s-desk-name" style={{ fontSize: `${1.1 * scaleMob}rem`, marginBottom: `${2 * scaleMob}px` }}>
-               {/* 💡 자리에 표시되는 이름은 여전히 별명(또는 종료 후 실명)만 표시됩니다. */}
                {seat.bid === 900 ? "입찰가능" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
             </div>
             
-            <div className="s-desk-bid" style={{ fontSize: `${1.0 * scaleMob}rem` }}>{seat.bid}P</div>
+            <div className="s-desk-bid" style={{ fontSize: `${1.0 * scaleMob}rem` }}>
+              {seat.bid === 900 ? "900P" : (seat.bid === 0 ? "랜덤배치" : seat.bid + "P")}
+            </div>
           </div>
         ))}
       </div>
 
-      {/* --- 모달 영역은 그대로 --- */}
       {biddingSeat && (
         <div className="auction-overlay">
           <div className="auction-modal" style={{ width: '90%', maxWidth: '400px', padding: '1.5rem', textAlign: 'center' }}>
