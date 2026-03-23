@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Draggable from 'react-draggable';
 import html2canvas from 'html2canvas';
 import { db } from './firebase';
-// [추가됨] get, onDisconnect, remove 등 중복 방지 기능 다시 활성화
 import { ref, onValue, set, update, get, onDisconnect, remove } from "firebase/database";
 import './App.css';
 
@@ -143,9 +142,8 @@ function TeacherView() {
     }
   };
 
-  // 💡 [새로 추가됨] 비상 상황용 접속 초기화 기능
   const handleUnlockUsers = () => {
-    if (window.confirm("학생들의 '기기 귀속(접속 잠금)'을 해제하시겠습니까?\n\n- 스마트폰이 꺼져서 다른 기기로 다시 로그인해야 하는 학생이 있을 때 누르세요.\n- 진행 중인 경매 입찰 기록은 지워지지 않습니다.")) {
+    if (window.confirm("학생들의 '기기 귀속(접속 잠금)'을 해제하시겠습니까?\n\n- 다른 기기로 다시 로그인해야 하는 학생이 있을 때 누르세요.\n- 진행 중인 경매 입찰 기록은 지워지지 않습니다.")) {
       remove(ref(db, 'activeUsers'));
       alert("접속 잠금이 모두 해제되었습니다! 튕긴 학생들에게 다시 로그인하라고 안내해 주세요.");
     }
@@ -241,7 +239,6 @@ function TeacherView() {
             🎲 남은 학생 랜덤 배치
           </button>
           
-          {/* 비상용 접속 잠금 해제 버튼 */}
           <button 
             onClick={handleUnlockUsers} 
             style={{ width: '100%', padding: '12px', background: '#f8fafc', color: '#64748b', border: '2px solid #cbd5e1', borderRadius: '12px', fontSize: '1rem', fontWeight: '700', cursor: 'pointer', marginTop: '10px' }}
@@ -295,7 +292,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (+ 기기 고유 ID 기반 중복방지 및 튕김 복구)
+// 2. 학생용 스마트폰 화면
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -311,7 +308,6 @@ function StudentView() {
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
 
-  // 💡 [추가됨] 접속하는 스마트폰의 고유 ID를 가져옵니다.
   const deviceId = useRef(getDeviceId());
 
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
@@ -322,11 +318,11 @@ function StudentView() {
       const data = await response.json();
       
       const dataArray = Array.isArray(data) ? data : (data.data || []);
-      const targetName = name.replace(/\s+/g, '');
       
+      // 💡 요청하신 대로 status 탭의 B열("이름" 헤더)만 명확하게 검사합니다.
       const studentData = dataArray.find(row => {
         const sheetName = String(row["이름"] || "").replace(/\s+/g, '');
-        return sheetName === targetName;
+        return sheetName === name; // name은 이미 공백이 제거된 상태로 들어옴
       });
       
       if (studentData) {
@@ -348,14 +344,12 @@ function StudentView() {
     const savedName = localStorage.getItem('student_realName');
     const savedNick = localStorage.getItem('student_nickname');
     
-    // 💡 [핵심] 튕겨서 새로고침 되더라도 로컬 저장소에 이름이 있으면 즉시 자동 복구됩니다!
     if (savedName && savedNick) {
       setRealName(savedName);
       setNickname(savedNick);
       setIsJoined(true);
       fetchMyPoints(savedName);
 
-      // 자동 복구 시 파이어베이스에도 현재 기기 ID로 다시 출석 도장을 찍어줍니다.
       const userRef = ref(db, `activeUsers/${savedName}`);
       set(userRef, deviceId.current);
       onDisconnect(userRef).remove();
@@ -373,44 +367,43 @@ function StudentView() {
         }
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleJoin = async () => {
-    const trimmedName = realName.trim();
-    if (!trimmedName) return alert("이름을 입력해주세요!");
+    // 💡 [핵심 마법 1] 아이들이 어떻게 띄어쓰기를 하든 공백을 100% 제거합니다.
+    const normalizedName = realName.replace(/\s+/g, '');
+    if (!normalizedName) return alert("이름을 입력해주세요!");
 
+    setRealName(normalizedName); // 입력창의 이름도 공백없는 이름으로 강제 변경
     setIsJoining(true);
 
-    // 1. 파이어베이스 접속자 명단(activeUsers)을 확인하여 기기 ID 일치 여부 검사
-    const userRef = ref(db, `activeUsers/${trimmedName}`);
+    const userRef = ref(db, `activeUsers/${normalizedName}`);
     const snapshot = await get(userRef);
     
     if (snapshot.exists()) {
       const existingDeviceId = snapshot.val();
-      // 누군가 접속해 있는데, 지금 로그인하려는 기기 ID와 다르다면 훔쳐 로그인하는 것으로 간주하고 차단!
       if (existingDeviceId !== deviceId.current) {
         setIsJoining(false);
-        return alert(`🚫 '${trimmedName}' 학생은 이미 다른 기기에서 접속 중입니다!\n\n(만약 기기가 바뀌었다면 선생님께 '접속 잠금 초기화'를 요청하세요.)`);
+        return alert(`🚫 '${normalizedName}' 학생은 이미 다른 기기에서 접속 중입니다!\n\n(만약 기기가 바뀌었다면 선생님께 '접속 잠금 초기화'를 요청하세요.)`);
       }
     }
 
-    const isNameValid = await fetchMyPoints(trimmedName);
+    const isNameValid = await fetchMyPoints(normalizedName);
     
     if (!isNameValid) {
       setIsJoining(false);
-      return alert("🚫 명단에 없는 이름입니다!\n오타나 띄어쓰기가 없는지 다시 확인해 주세요.");
+      return alert("🚫 구글 시트 명단(B열)에 없는 이름입니다!\n오타나 띄어쓰기가 없는지 다시 확인해 주세요.");
     }
 
-    // 2. 검증이 끝났다면 내 스마트폰 고유 ID로 자물쇠를 채웁니다.
     await set(userRef, deviceId.current);
-    // 앱이 정상 종료될 때 자물쇠를 풀어주도록 예약
     onDisconnect(userRef).remove();
 
     const newNick = generateNickname();
     setNickname(newNick);
     setIsJoined(true);
-    localStorage.setItem('student_realName', trimmedName);
+    
+    // 로컬 저장소에도 공백 없는 이름 저장
+    localStorage.setItem('student_realName', normalizedName);
     localStorage.setItem('student_nickname', newNick);
     
     setIsJoining(false);
@@ -419,7 +412,6 @@ function StudentView() {
 
   const handleLogout = async () => {
     if (window.confirm("로그아웃 하시겠습니까? (현재 입찰 기록은 유지됩니다)")) {
-      // 💡 로그아웃 시 내 자물쇠(activeUsers 기록)를 확실하게 지워줍니다.
       const savedName = localStorage.getItem('student_realName');
       if (savedName) {
         await remove(ref(db, `activeUsers/${savedName}`));
@@ -452,7 +444,9 @@ function StudentView() {
 
     const updates = {};
     seats.forEach(seat => {
-      if (seat.nickname === nickname && seat.id !== biddingSeat.id) {
+      // 💡 [핵심 마법 2] 별명(nickname)이 아닌 절대 변하지 않는 '진짜 이름(realName)'으로 비교하여, 
+      // 캐시를 지우고 다른 별명을 받아와서 자리를 2개 차지하는 꼼수를 원천 차단합니다.
+      if (seat.realName === realName && seat.id !== biddingSeat.id) {
         updates[`seats/${seat.id}/bid`] = 900;
         updates[`seats/${seat.id}/nickname`] = '';
         updates[`seats/${seat.id}/realName`] = '';
@@ -608,7 +602,7 @@ function StudentView() {
               {tempBid > myPoints ? "포인트 부족 🚫" : `✅ ${tempBid}P로 입찰 확정!`}
             </button>
 
-            {biddingSeat.nickname === nickname && (
+            {biddingSeat.realName === realName && (
               <button onClick={handleCancelBid} style={{ width: '100%', padding: '16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: '800', marginTop: '10px', cursor: 'pointer' }}>
                 ❌ 내 입찰 취소하기
               </button>
