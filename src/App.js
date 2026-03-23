@@ -12,7 +12,7 @@ const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래',
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 // ==========================================
-// 1. 선생님용 메인 화면 (변경 없음)
+// 1. 선생님용 메인 화면 (+ 바둑판 자석 스냅 기능)
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -63,8 +63,13 @@ function TeacherView() {
     update(ref(db, 'config'), { seatCount: Number(count), cols: Number(columns), studentInput: input });
   };
 
+  // 💡 [핵심 마법 1] 드래그가 끝날 때 투명한 바둑판 위치로 자석처럼 정렬(Snap)시킵니다.
   const handleStop = (id, e, data) => {
-    update(ref(db, `seats/${id}`), { x: data.x, y: data.y });
+    // 150, 180은 교탁을 피하기 위한 초기 오프셋 값, 300과 230은 책상 간의 간격입니다.
+    const snappedX = Math.max(150, Math.round((data.x - 150) / (300 * scale)) * (300 * scale) + 150);
+    const snappedY = Math.max(180, Math.round((data.y - 180) / (230 * scale)) * (230 * scale) + 180);
+    
+    update(ref(db, `seats/${id}`), { x: snappedX, y: snappedY });
   };
 
   const resetPositions = () => {
@@ -265,7 +270,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (큼직한 모바일 친화적 바둑판 배열로 복구!)
+// 2. 학생용 스마트폰 화면 (+ 선생님 자리 완벽 동기화 및 모바일 잘림 방지)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -400,9 +405,30 @@ function StudentView() {
     );
   }
 
+  // 💡 [핵심 마법 2] 선생님이 저장한 x, y 좌표를 읽어서 '몇 번째 열/행'인지 정확히 계산합니다.
+  const teacherCols = cols || 4;
+  const teacherScale = Math.min(1.2, 4 / teacherCols);
+
+  const gridSeats = seats.map(seat => {
+    const x = seat.x !== undefined ? seat.x : 0;
+    const y = seat.y !== undefined ? seat.y : 0;
+    
+    // 선생님 화면의 좌표 계산 공식을 역으로 풀어서 몇 열/몇 행인지 추출
+    const colIndex = Math.max(1, Math.round((x - 150) / (300 * teacherScale)) + 1);
+    const rowIndex = Math.max(1, Math.round((y - 180) / (230 * teacherScale)) + 1);
+    
+    return { ...seat, c: colIndex, r: rowIndex };
+  });
+
+  // 화면에 렌더링해야 할 최대 가로 줄 수 계산
+  const maxCol = Math.max(...gridSeats.map(s => s.c), teacherCols, 1);
+  const maxRow = Math.max(...gridSeats.map(s => s.r), 1);
+
+  // 책상이 너무 많으면 폰트 크기를 살짝 줄여서 삐져나가지 않게 보정
+  const fontScale = Math.min(1, 4 / maxCol);
+
   return (
     <div className="student-app" style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f8fafc' }}>
-      {/* 고정된 상단 헤더 */}
       <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 15px', flexShrink: 0, background: '#1e293b', color: 'white' }}>
         <div style={{ lineHeight: '1.4' }}>
           <div>내 암호명: <strong>{nickname}</strong> <span style={{fontSize: '0.8rem', fontWeight: 'normal', color: '#cbd5e1'}}>({realName})</span></div>
@@ -418,39 +444,49 @@ function StudentView() {
         </div>
       </div>
       
-      {/* 💡 [수정됨] 스크롤이 가능한 큼직한 바둑판 영역 */}
+      {/* 💡 [핵심 마법 3] minmax(0, 1fr) 속성으로 절대 화면 밖으로 잘려나가지 않도록 강제합니다. */}
       <div style={{ flexGrow: 1, overflowY: 'auto', padding: '15px' }}>
-        
-        {/* 맨 위에 추가된 교탁 디자인 */}
-        <div style={{ gridColumn: '1 / -1', background: '#cbd5e1', color: '#334155', padding: '12px', textAlign: 'center', borderRadius: '12px', fontWeight: '900', fontSize: '1.1rem', marginBottom: '15px', border: '2px solid #94a3b8' }}>
-          👨‍🏫 교 탁
-        </div>
+        <div style={{ 
+          display: 'grid', 
+          gridTemplateColumns: `repeat(${maxCol}, minmax(0, 1fr))`, // 화면 밖으로 넘어가는 것을 원천 차단
+          gridAutoRows: '1fr', 
+          gap: '8px' 
+        }}>
+          
+          {/* 교탁은 항상 첫 번째 행(1줄)을 전부 차지합니다. */}
+          <div style={{ gridColumn: `1 / span ${maxCol}`, gridRow: 1, background: '#cbd5e1', color: '#334155', padding: '10px', textAlign: 'center', borderRadius: '12px', fontWeight: '900', fontSize: '1.1rem', marginBottom: '5px', border: '2px solid #94a3b8' }}>
+            👨‍🏫 교 탁
+          </div>
 
-        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '10px' }}>
-          {seats.map((seat) => (
+          {/* 선생님이 배치한 좌표(열/행)에 맞춰 책상들이 쏙쏙 들어갑니다. */}
+          {gridSeats.map((seat) => (
             <div key={seat.id} className={`student-desk ${seat.nickname === nickname ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
                  style={{ 
+                   gridColumn: seat.c,
+                   gridRow: seat.r + 1, // 교탁이 1행이므로 학생 자리는 2행부터 시작
                    background: seat.nickname === nickname ? '#eef2ff' : 'white',
                    border: `2px solid ${seat.nickname === nickname ? '#4f46e5' : '#cbd5e1'}`,
-                   borderRadius: '12px', padding: '15px 10px', textAlign: 'center', cursor: 'pointer',
-                   boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                   borderRadius: '10px', padding: '10px 5px', textAlign: 'center', cursor: 'pointer',
+                   boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                   display: 'flex', flexDirection: 'column', justifyContent: 'center'
                  }}>
-              <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: 'bold', marginBottom: '8px' }}>
+              <div style={{ fontSize: `${0.7 * fontScale}rem`, color: '#94a3b8', fontWeight: 'bold', marginBottom: '6px' }}>
                 #{seat.id + 1}
               </div>
               
-              <div style={{ fontSize: '1.1rem', fontWeight: '900', color: '#1e293b', marginBottom: '8px', wordBreak: 'keep-all' }}>
+              <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
                  {seat.bid === 900 ? "입찰가능" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
               </div>
               
-              <div style={{ fontSize: '1rem', fontWeight: '800', color: '#ef4444' }}>
-                {seat.bid === 900 ? "900P" : (seat.bid === 0 ? "랜덤배치" : seat.bid + "P")}
+              <div style={{ fontSize: `${1.0 * fontScale}rem`, fontWeight: '800', color: '#ef4444' }}>
+                {seat.bid === 900 ? "900P" : (seat.bid === 0 ? "랜덤" : seat.bid + "P")}
               </div>
             </div>
           ))}
         </div>
       </div>
 
+      {/* --- 입찰 모달 유지 --- */}
       {biddingSeat && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
           <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '400px', padding: '1.5rem', borderRadius: '20px', textAlign: 'center' }}>
