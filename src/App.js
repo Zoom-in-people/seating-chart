@@ -268,7 +268,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (+ 취소 버튼 및 내 자리 확인 기능)
+// 2. 학생용 스마트폰 화면
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -283,8 +283,6 @@ function StudentView() {
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
-
-  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
 
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
@@ -317,9 +315,6 @@ function StudentView() {
   };
 
   useEffect(() => {
-    const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener('resize', handleResize);
-
     const savedName = localStorage.getItem('student_realName');
     const savedNick = localStorage.getItem('student_nickname');
     if (savedName && savedNick) {
@@ -341,7 +336,6 @@ function StudentView() {
         }
       }
     });
-    return () => window.removeEventListener('resize', handleResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -410,7 +404,6 @@ function StudentView() {
     setBiddingSeat(null); 
   };
 
-  // 💡 [새로 추가됨] 입찰 취소 기능
   const handleCancelBid = () => {
     if (window.confirm("정말 이 자리의 입찰을 취소하시겠습니까?\n취소하면 즉시 빈 자리(900P)가 됩니다.")) {
       const updates = {};
@@ -418,7 +411,7 @@ function StudentView() {
       updates[`seats/${biddingSeat.id}/nickname`] = '';
       updates[`seats/${biddingSeat.id}/realName`] = '';
       update(ref(db), updates);
-      setBiddingSeat(null); // 모달 닫기
+      setBiddingSeat(null); 
     }
   };
 
@@ -504,7 +497,6 @@ function StudentView() {
                 #{seat.id + 1}
               </div>
               
-              {/* 💡 [핵심 마법 1] 내 자리인 경우 닉네임 밑에 (진짜이름)을 띄워줍니다! */}
               <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
                  {seat.bid === 900 
                    ? "입찰가능" 
@@ -553,7 +545,6 @@ function StudentView() {
               {tempBid > myPoints ? "포인트 부족 🚫" : `✅ ${tempBid}P로 입찰 확정!`}
             </button>
 
-            {/* 💡 [핵심 마법 2] 현재 터치한 자리가 내 자리일 경우 입찰 취소 버튼이 나타납니다. */}
             {biddingSeat.nickname === nickname && (
               <button onClick={handleCancelBid} style={{ width: '100%', padding: '16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: '800', marginTop: '10px', cursor: 'pointer' }}>
                 ❌ 내 입찰 취소하기
