@@ -12,7 +12,7 @@ const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래',
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 // ==========================================
-// 1. 선생님용 메인 화면 (+ 바둑판 자석 스냅 기능)
+// 1. 선생님용 메인 화면
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -63,9 +63,7 @@ function TeacherView() {
     update(ref(db, 'config'), { seatCount: Number(count), cols: Number(columns), studentInput: input });
   };
 
-  // 💡 [핵심 마법 1] 드래그가 끝날 때 투명한 바둑판 위치로 자석처럼 정렬(Snap)시킵니다.
   const handleStop = (id, e, data) => {
-    // 150, 180은 교탁을 피하기 위한 초기 오프셋 값, 300과 230은 책상 간의 간격입니다.
     const snappedX = Math.max(150, Math.round((data.x - 150) / (300 * scale)) * (300 * scale) + 150);
     const snappedY = Math.max(180, Math.round((data.y - 180) / (230 * scale)) * (230 * scale) + 180);
     
@@ -270,12 +268,13 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (+ 선생님 자리 완벽 동기화 및 모바일 잘림 방지)
+// 2. 학생용 스마트폰 화면 (+ 취소 버튼 및 내 자리 확인 기능)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
   const [nickname, setNickname] = useState("");
   const [isJoined, setIsJoined] = useState(false);
+  const [isJoining, setIsJoining] = useState(false);
   
   const [seats, setSeats] = useState([]);
   const [cols, setCols] = useState(4);
@@ -284,6 +283,8 @@ function StudentView() {
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
+
+  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
 
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
@@ -304,15 +305,21 @@ function StudentView() {
         const pointString = String(studentData["잔액"] || "0");
         const cleanPoint = Number(pointString.replace(/[^0-9-]/g, ''));
         setMyPoints(cleanPoint);
+        return true; 
       } else {
         setMyPoints(0);
+        return false; 
       }
     } catch (error) {
-      console.error("포인트를 불러오는데 실패했습니다.", error);
+      console.error("데이터 통신 에러:", error);
+      return false; 
     }
   };
 
   useEffect(() => {
+    const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
+    window.addEventListener('resize', handleResize);
+
     const savedName = localStorage.getItem('student_realName');
     const savedNick = localStorage.getItem('student_nickname');
     if (savedName && savedNick) {
@@ -334,12 +341,21 @@ function StudentView() {
         }
       }
     });
+    return () => window.removeEventListener('resize', handleResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  const handleJoin = () => {
+  const handleJoin = async () => {
     const trimmedName = realName.trim();
     if (!trimmedName) return alert("이름을 입력해주세요!");
+
+    setIsJoining(true);
+    const isNameValid = await fetchMyPoints(trimmedName);
+    setIsJoining(false);
+
+    if (!isNameValid) {
+      return alert("🚫 명단에 없는 이름입니다!\n오타나 띄어쓰기가 없는지 다시 확인해 주세요.");
+    }
 
     const newNick = generateNickname();
     setNickname(newNick);
@@ -347,7 +363,6 @@ function StudentView() {
     localStorage.setItem('student_realName', trimmedName);
     localStorage.setItem('student_nickname', newNick);
     
-    fetchMyPoints(trimmedName);
     alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
   };
 
@@ -395,17 +410,40 @@ function StudentView() {
     setBiddingSeat(null); 
   };
 
+  // 💡 [새로 추가됨] 입찰 취소 기능
+  const handleCancelBid = () => {
+    if (window.confirm("정말 이 자리의 입찰을 취소하시겠습니까?\n취소하면 즉시 빈 자리(900P)가 됩니다.")) {
+      const updates = {};
+      updates[`seats/${biddingSeat.id}/bid`] = 900;
+      updates[`seats/${biddingSeat.id}/nickname`] = '';
+      updates[`seats/${biddingSeat.id}/realName`] = '';
+      update(ref(db), updates);
+      setBiddingSeat(null); // 모달 닫기
+    }
+  };
+
   if (!isJoined) {
     return (
       <div className="student-login">
         <h2>블라인드 자리 경매</h2>
-        <input type="text" placeholder="본인 실명 입력 (예: 김철수)" value={realName} onChange={e => setRealName(e.target.value)} />
-        <button onClick={handleJoin}>입장하기 (암호명 발급)</button>
+        <input 
+          type="text" 
+          placeholder="본인 실명 입력 (예: 김철수)" 
+          value={realName} 
+          onChange={e => setRealName(e.target.value)} 
+          disabled={isJoining}
+        />
+        <button 
+          onClick={handleJoin} 
+          disabled={isJoining}
+          style={{ background: isJoining ? '#94a3b8' : '#4f46e5' }}
+        >
+          {isJoining ? "명단 확인 중...⏳" : "입장하기 (암호명 발급)"}
+        </button>
       </div>
     );
   }
 
-  // 💡 [핵심 마법 2] 선생님이 저장한 x, y 좌표를 읽어서 '몇 번째 열/행'인지 정확히 계산합니다.
   const teacherCols = cols || 4;
   const teacherScale = Math.min(1.2, 4 / teacherCols);
 
@@ -413,18 +451,13 @@ function StudentView() {
     const x = seat.x !== undefined ? seat.x : 0;
     const y = seat.y !== undefined ? seat.y : 0;
     
-    // 선생님 화면의 좌표 계산 공식을 역으로 풀어서 몇 열/몇 행인지 추출
     const colIndex = Math.max(1, Math.round((x - 150) / (300 * teacherScale)) + 1);
     const rowIndex = Math.max(1, Math.round((y - 180) / (230 * teacherScale)) + 1);
     
     return { ...seat, c: colIndex, r: rowIndex };
   });
 
-  // 화면에 렌더링해야 할 최대 가로 줄 수 계산
   const maxCol = Math.max(...gridSeats.map(s => s.c), teacherCols, 1);
-  const maxRow = Math.max(...gridSeats.map(s => s.r), 1);
-
-  // 책상이 너무 많으면 폰트 크기를 살짝 줄여서 삐져나가지 않게 보정
   const fontScale = Math.min(1, 4 / maxCol);
 
   return (
@@ -444,26 +477,23 @@ function StudentView() {
         </div>
       </div>
       
-      {/* 💡 [핵심 마법 3] minmax(0, 1fr) 속성으로 절대 화면 밖으로 잘려나가지 않도록 강제합니다. */}
       <div style={{ flexGrow: 1, overflowY: 'auto', padding: '15px' }}>
         <div style={{ 
           display: 'grid', 
-          gridTemplateColumns: `repeat(${maxCol}, minmax(0, 1fr))`, // 화면 밖으로 넘어가는 것을 원천 차단
+          gridTemplateColumns: `repeat(${maxCol}, minmax(0, 1fr))`, 
           gridAutoRows: '1fr', 
           gap: '8px' 
         }}>
           
-          {/* 교탁은 항상 첫 번째 행(1줄)을 전부 차지합니다. */}
           <div style={{ gridColumn: `1 / span ${maxCol}`, gridRow: 1, background: '#cbd5e1', color: '#334155', padding: '10px', textAlign: 'center', borderRadius: '12px', fontWeight: '900', fontSize: '1.1rem', marginBottom: '5px', border: '2px solid #94a3b8' }}>
             👨‍🏫 교 탁
           </div>
 
-          {/* 선생님이 배치한 좌표(열/행)에 맞춰 책상들이 쏙쏙 들어갑니다. */}
           {gridSeats.map((seat) => (
             <div key={seat.id} className={`student-desk ${seat.nickname === nickname ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
                  style={{ 
                    gridColumn: seat.c,
-                   gridRow: seat.r + 1, // 교탁이 1행이므로 학생 자리는 2행부터 시작
+                   gridRow: seat.r + 1, 
                    background: seat.nickname === nickname ? '#eef2ff' : 'white',
                    border: `2px solid ${seat.nickname === nickname ? '#4f46e5' : '#cbd5e1'}`,
                    borderRadius: '10px', padding: '10px 5px', textAlign: 'center', cursor: 'pointer',
@@ -474,8 +504,17 @@ function StudentView() {
                 #{seat.id + 1}
               </div>
               
+              {/* 💡 [핵심 마법 1] 내 자리인 경우 닉네임 밑에 (진짜이름)을 띄워줍니다! */}
               <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
-                 {seat.bid === 900 ? "입찰가능" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
+                 {seat.bid === 900 
+                   ? "입찰가능" 
+                   : (auctionStatus === 'ended' 
+                       ? seat.realName 
+                       : (seat.nickname === nickname 
+                           ? <>{seat.nickname}<br/><span style={{fontSize: '0.8em', color: '#4f46e5'}}>({realName})</span></> 
+                           : seat.nickname)
+                     )
+                 }
               </div>
               
               <div style={{ fontSize: `${1.0 * fontScale}rem`, fontWeight: '800', color: '#ef4444' }}>
@@ -486,7 +525,6 @@ function StudentView() {
         </div>
       </div>
 
-      {/* --- 입찰 모달 유지 --- */}
       {biddingSeat && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
           <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '400px', padding: '1.5rem', borderRadius: '20px', textAlign: 'center' }}>
@@ -514,9 +552,16 @@ function StudentView() {
             <button onClick={confirmBid} style={{ width: '100%', padding: '16px', background: tempBid > myPoints ? '#94a3b8' : '#4f46e5', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: '800', marginTop: '15px', cursor: tempBid > myPoints ? 'not-allowed' : 'pointer' }}>
               {tempBid > myPoints ? "포인트 부족 🚫" : `✅ ${tempBid}P로 입찰 확정!`}
             </button>
+
+            {/* 💡 [핵심 마법 2] 현재 터치한 자리가 내 자리일 경우 입찰 취소 버튼이 나타납니다. */}
+            {biddingSeat.nickname === nickname && (
+              <button onClick={handleCancelBid} style={{ width: '100%', padding: '16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: '800', marginTop: '10px', cursor: 'pointer' }}>
+                ❌ 내 입찰 취소하기
+              </button>
+            )}
             
             <button className="btn-close-auction" style={{ background: '#cbd5e1', color: '#334155', padding: '12px', marginTop: '10px', width: '100%', border: 'none', borderRadius: '12px', fontSize: '1rem', fontWeight: '700', cursor: 'pointer' }} onClick={() => setBiddingSeat(null)}>
-              취소
+              닫기
             </button>
           </div>
         </div>
