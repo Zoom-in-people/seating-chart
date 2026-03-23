@@ -12,7 +12,7 @@ const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래',
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 // ==========================================
-// 1. 선생님용 메인 화면
+// 1. 선생님용 메인 화면 (변경 사항 없음)
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -226,7 +226,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (GAS 연동 초강력 보정 버전)
+// 2. 학생용 스마트폰 화면 (+ 진짜 이름 표시 및 꽉 찬 화면 비율 조정)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -241,7 +241,7 @@ function StudentView() {
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
 
-  // 🚨 여기에 선생님의 실제 URL을 확인해서 넣어주세요! (?type=status 필수!)
+  // 선생님의 구글 스크립트 주소
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
   const fetchMyPoints = async (name) => {
@@ -250,18 +250,14 @@ function StudentView() {
       const data = await response.json();
       
       const dataArray = Array.isArray(data) ? data : (data.data || []);
-      
-      // 💡 [초강력 보정 1] 학생이 입력한 이름에서 공백 완전 제거 ("김 철수" -> "김철수")
       const targetName = name.replace(/\s+/g, '');
       
       const studentData = dataArray.find(row => {
-        // 시트의 '이름' 열에 띄어쓰기가 있어도 무시하고 일치하는지 검사
         const sheetName = String(row["이름"] || "").replace(/\s+/g, '');
         return sheetName === targetName;
       });
       
       if (studentData) {
-        // 💡 [초강력 보정 2] 잔액에 쉼표나 문자가 섞여있어도 숫자만 쏙 빼내기 ("1,500" -> 1500)
         const pointString = String(studentData["잔액"] || "0");
         const cleanPoint = Number(pointString.replace(/[^0-9-]/g, ''));
         setMyPoints(cleanPoint);
@@ -271,8 +267,7 @@ function StudentView() {
       }
     } catch (error) {
       console.error("포인트를 불러오는데 실패했습니다.", error);
-      // 권한 에러 시 스마트폰 화면에 원인 알림창 띄우기
-      alert("⚠️ 잔액 데이터를 불러오지 못했습니다. 선생님께 구글 스크립트 '권한 설정'을 확인해달라고 말씀드리세요!");
+      alert("⚠️ 잔액 데이터를 불러오지 못했습니다. 선생님께 스크립트 권한을 확인해달라고 말씀드리세요!");
     }
   };
 
@@ -367,14 +362,20 @@ function StudentView() {
     );
   }
 
+  // 💡 [화면 비율 계산 마법] 책상 개수에 따라 글자와 여백을 자동으로 줄여서 화면에 쏙 들어가게 만듭니다!
+  const totalSeats = seats.length || 24;
+  const rows = Math.ceil(totalSeats / (cols || 4)) || 1;
+  const scaleMob = Math.min(1.2, 6 / rows, 4 / (cols || 4));
+
   return (
-    <div className="student-app">
-      <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+    <div className="student-app" style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+      <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 15px', flexShrink: 0 }}>
         <div style={{ lineHeight: '1.4' }}>
-          <div>내 암호명: <strong>{nickname}</strong></div>
+          {/* 💡 [수정 1] 내 암호명 옆에 내 진짜 이름을 연한 글씨로 표시합니다. */}
+          <div>내 암호명: <strong>{nickname}</strong> <span style={{fontSize: '0.8rem', fontWeight: 'normal', color: '#cbd5e1'}}>({realName})</span></div>
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '8px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
           <div className="status-badge">
             {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
           </div>
@@ -384,18 +385,24 @@ function StudentView() {
         </div>
       </div>
       
-      <div className="student-grid" style={{ gridTemplateColumns: `repeat(${cols}, 1fr)` }}>
+      {/* 💡 [수정 2] 화면 높이에 맞춰 격자(Grid) 크기를 100% 꽉 채우고 스크롤을 막았습니다. */}
+      <div style={{ flexGrow: 1, display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gridTemplateRows: `repeat(${rows}, 1fr)`, gap: `${6 * scaleMob}px`, padding: `${10 * scaleMob}px`, overflow: 'hidden', boxSizing: 'border-box' }}>
         {seats.map((seat) => (
-          <div key={seat.id} className={`student-desk ${seat.nickname === nickname ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}>
-            <div className="s-desk-num">#{seat.id + 1}</div>
-            <div className="s-desk-name">
+          <div key={seat.id} className={`student-desk ${seat.nickname === nickname ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
+               style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', padding: `${4 * scaleMob}px`, minHeight: 0, margin: 0 }}>
+            <div className="s-desk-num" style={{ fontSize: `${0.7 * scaleMob}rem`, marginBottom: `${2 * scaleMob}px` }}>#{seat.id + 1}</div>
+            
+            <div className="s-desk-name" style={{ fontSize: `${1.1 * scaleMob}rem`, marginBottom: `${2 * scaleMob}px` }}>
+               {/* 💡 자리에 표시되는 이름은 여전히 별명(또는 종료 후 실명)만 표시됩니다. */}
                {seat.bid === 900 ? "입찰가능" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
             </div>
-            <div className="s-desk-bid">{seat.bid}P</div>
+            
+            <div className="s-desk-bid" style={{ fontSize: `${1.0 * scaleMob}rem` }}>{seat.bid}P</div>
           </div>
         ))}
       </div>
 
+      {/* --- 모달 영역은 그대로 --- */}
       {biddingSeat && (
         <div className="auction-overlay">
           <div className="auction-modal" style={{ width: '90%', maxWidth: '400px', padding: '1.5rem', textAlign: 'center' }}>
