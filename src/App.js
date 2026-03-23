@@ -3,13 +3,24 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Draggable from 'react-draggable';
 import html2canvas from 'html2canvas';
 import { db } from './firebase';
-import { ref, onValue, set, update } from "firebase/database";
+// [추가됨] get, onDisconnect, remove 등 중복 방지 기능 다시 활성화
+import { ref, onValue, set, update, get, onDisconnect, remove } from "firebase/database";
 import './App.css';
 
 // --- 무작위 별명 생성기 ---
 const adjectives = ['붉은', '푸른', '춤추는', '용감한', '날쌘', '지혜로운', '신비한', '고독한', '즐거운', '빛나는'];
 const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래', '거북이', '고양이', '강아지', '여우'];
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
+
+// --- 스마트폰 고유 ID 생성기 (튕김 방지용) ---
+const getDeviceId = () => {
+  let id = localStorage.getItem('device_id');
+  if (!id) {
+    id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    localStorage.setItem('device_id', id);
+  }
+  return id;
+};
 
 // ==========================================
 // 1. 선생님용 메인 화면
@@ -132,6 +143,14 @@ function TeacherView() {
     }
   };
 
+  // 💡 [새로 추가됨] 비상 상황용 접속 초기화 기능
+  const handleUnlockUsers = () => {
+    if (window.confirm("학생들의 '기기 귀속(접속 잠금)'을 해제하시겠습니까?\n\n- 스마트폰이 꺼져서 다른 기기로 다시 로그인해야 하는 학생이 있을 때 누르세요.\n- 진행 중인 경매 입찰 기록은 지워지지 않습니다.")) {
+      remove(ref(db, 'activeUsers'));
+      alert("접속 잠금이 모두 해제되었습니다! 튕긴 학생들에게 다시 로그인하라고 안내해 주세요.");
+    }
+  };
+
   const handleExportImage = () => {
     const container = canvasRef.current;
     if (!container) return;
@@ -222,6 +241,14 @@ function TeacherView() {
             🎲 남은 학생 랜덤 배치
           </button>
           
+          {/* 비상용 접속 잠금 해제 버튼 */}
+          <button 
+            onClick={handleUnlockUsers} 
+            style={{ width: '100%', padding: '12px', background: '#f8fafc', color: '#64748b', border: '2px solid #cbd5e1', borderRadius: '12px', fontSize: '1rem', fontWeight: '700', cursor: 'pointer', marginTop: '10px' }}
+          >
+            🔓 접속 잠금 초기화 (비상용)
+          </button>
+          
           <p className="hint" style={{marginTop:'10px'}}>* 접속 주소: 웹주소/student</p>
         </div>
 
@@ -268,7 +295,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면
+// 2. 학생용 스마트폰 화면 (+ 기기 고유 ID 기반 중복방지 및 튕김 복구)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -283,6 +310,9 @@ function StudentView() {
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
+
+  // 💡 [추가됨] 접속하는 스마트폰의 고유 ID를 가져옵니다.
+  const deviceId = useRef(getDeviceId());
 
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
@@ -317,11 +347,18 @@ function StudentView() {
   useEffect(() => {
     const savedName = localStorage.getItem('student_realName');
     const savedNick = localStorage.getItem('student_nickname');
+    
+    // 💡 [핵심] 튕겨서 새로고침 되더라도 로컬 저장소에 이름이 있으면 즉시 자동 복구됩니다!
     if (savedName && savedNick) {
       setRealName(savedName);
       setNickname(savedNick);
       setIsJoined(true);
       fetchMyPoints(savedName);
+
+      // 자동 복구 시 파이어베이스에도 현재 기기 ID로 다시 출석 도장을 찍어줍니다.
+      const userRef = ref(db, `activeUsers/${savedName}`);
+      set(userRef, deviceId.current);
+      onDisconnect(userRef).remove();
     }
 
     const dbRef = ref(db, '/');
@@ -344,12 +381,31 @@ function StudentView() {
     if (!trimmedName) return alert("이름을 입력해주세요!");
 
     setIsJoining(true);
-    const isNameValid = await fetchMyPoints(trimmedName);
-    setIsJoining(false);
 
+    // 1. 파이어베이스 접속자 명단(activeUsers)을 확인하여 기기 ID 일치 여부 검사
+    const userRef = ref(db, `activeUsers/${trimmedName}`);
+    const snapshot = await get(userRef);
+    
+    if (snapshot.exists()) {
+      const existingDeviceId = snapshot.val();
+      // 누군가 접속해 있는데, 지금 로그인하려는 기기 ID와 다르다면 훔쳐 로그인하는 것으로 간주하고 차단!
+      if (existingDeviceId !== deviceId.current) {
+        setIsJoining(false);
+        return alert(`🚫 '${trimmedName}' 학생은 이미 다른 기기에서 접속 중입니다!\n\n(만약 기기가 바뀌었다면 선생님께 '접속 잠금 초기화'를 요청하세요.)`);
+      }
+    }
+
+    const isNameValid = await fetchMyPoints(trimmedName);
+    
     if (!isNameValid) {
+      setIsJoining(false);
       return alert("🚫 명단에 없는 이름입니다!\n오타나 띄어쓰기가 없는지 다시 확인해 주세요.");
     }
+
+    // 2. 검증이 끝났다면 내 스마트폰 고유 ID로 자물쇠를 채웁니다.
+    await set(userRef, deviceId.current);
+    // 앱이 정상 종료될 때 자물쇠를 풀어주도록 예약
+    onDisconnect(userRef).remove();
 
     const newNick = generateNickname();
     setNickname(newNick);
@@ -357,11 +413,18 @@ function StudentView() {
     localStorage.setItem('student_realName', trimmedName);
     localStorage.setItem('student_nickname', newNick);
     
+    setIsJoining(false);
     alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
   };
 
-  const handleLogout = () => {
+  const handleLogout = async () => {
     if (window.confirm("로그아웃 하시겠습니까? (현재 입찰 기록은 유지됩니다)")) {
+      // 💡 로그아웃 시 내 자물쇠(activeUsers 기록)를 확실하게 지워줍니다.
+      const savedName = localStorage.getItem('student_realName');
+      if (savedName) {
+        await remove(ref(db, `activeUsers/${savedName}`));
+      }
+
       localStorage.removeItem('student_realName');
       localStorage.removeItem('student_nickname');
       setRealName("");
