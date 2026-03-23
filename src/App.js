@@ -3,7 +3,6 @@ import { BrowserRouter, Routes, Route } from 'react-router-dom';
 import Draggable from 'react-draggable';
 import html2canvas from 'html2canvas';
 import { db } from './firebase';
-// 불필요해진 중복 로그인 방지 모듈 제거
 import { ref, onValue, set, update } from "firebase/database";
 import './App.css';
 
@@ -13,7 +12,7 @@ const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래',
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
 // ==========================================
-// 1. 선생님용 메인 화면
+// 1. 선생님용 메인 화면 (변경 없음)
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -80,7 +79,6 @@ function TeacherView() {
     }
   };
 
-  // 💡 [수정됨] 접속 제한 초기화 기능을 빼고 단순하게 되돌림
   const handleStartAuction = () => {
     if (window.confirm("블라인드 경매를 시작합니까? 모든 자리가 900P로 초기화됩니다.")) {
       const updates = {};
@@ -267,7 +265,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (+ 자유배치 화면 완벽 동기화)
+// 2. 학생용 스마트폰 화면 (큼직한 모바일 친화적 바둑판 배열로 복구!)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -281,9 +279,6 @@ function StudentView() {
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
-
-  // 💡 [새로 추가됨] 모바일 화면 크기를 감지하여 비율을 조정하기 위한 설정
-  const [dimensions, setDimensions] = useState({ width: window.innerWidth, height: window.innerHeight });
 
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
@@ -313,10 +308,6 @@ function StudentView() {
   };
 
   useEffect(() => {
-    // 화면 회전이나 크기 변경 시 실시간으로 사이즈 감지
-    const handleResize = () => setDimensions({ width: window.innerWidth, height: window.innerHeight });
-    window.addEventListener('resize', handleResize);
-
     const savedName = localStorage.getItem('student_realName');
     const savedNick = localStorage.getItem('student_nickname');
     if (savedName && savedNick) {
@@ -338,11 +329,9 @@ function StudentView() {
         }
       }
     });
-    return () => window.removeEventListener('resize', handleResize);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // 💡 [수정됨] 접속 제한 로직 제거 (단순 입장으로 복구)
   const handleJoin = () => {
     const trimmedName = realName.trim();
     if (!trimmedName) return alert("이름을 입력해주세요!");
@@ -411,38 +400,16 @@ function StudentView() {
     );
   }
 
-  // 💡 [핵심 마법] 선생님 화면의 책상 좌표를 모바일 화면에 맞춰 그대로 축소/복사합니다.
-  const scale = Math.min(1.2, 4 / (cols || 1)); 
-  const deskWidth = 220 * scale;
-  const deskHeight = 150 * scale;
-
-  // 전체 책상이 차지하는 가장 바깥쪽 좌표(가로/세로 길이)를 구합니다.
-  const minX = seats.length > 0 ? Math.min(...seats.map(s => s.x)) : 0;
-  const maxX = seats.length > 0 ? Math.max(...seats.map(s => s.x)) : 0;
-  const minY = seats.length > 0 ? Math.min(...seats.map(s => s.y)) : 0;
-  const maxY = seats.length > 0 ? Math.max(...seats.map(s => s.y)) : 0;
-
-  const layoutWidth = maxX - minX + deskWidth;
-  const layoutHeight = maxY - minY + deskHeight;
-
-  // 스마트폰의 좁은 여백과 상단 헤더 높이를 뺀 '실제 사용 가능 공간'
-  const availableWidth = dimensions.width - 20; 
-  const availableHeight = dimensions.height - 120; 
-
-  // 화면에 딱 들어가도록 줌아웃(축소) 비율 계산
-  const fitScale = layoutWidth > 0 && layoutHeight > 0 
-    ? Math.min(availableWidth / layoutWidth, availableHeight / layoutHeight) 
-    : 1;
-
   return (
-    <div className="student-app" style={{ height: '100vh', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
-      <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 15px', flexShrink: 0 }}>
+    <div className="student-app" style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f8fafc' }}>
+      {/* 고정된 상단 헤더 */}
+      <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 15px', flexShrink: 0, background: '#1e293b', color: 'white' }}>
         <div style={{ lineHeight: '1.4' }}>
           <div>내 암호명: <strong>{nickname}</strong> <span style={{fontSize: '0.8rem', fontWeight: 'normal', color: '#cbd5e1'}}>({realName})</span></div>
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-          <div className="status-badge">
+          <div className="status-badge" style={{ background: auctionStatus === 'active' ? '#ef4444' : '#f59e0b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
             {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
           </div>
           <button onClick={handleLogout} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #94a3b8', borderRadius: '6px', fontSize: '0.75rem', padding: '4px 8px', cursor: 'pointer' }}>
@@ -451,57 +418,59 @@ function StudentView() {
         </div>
       </div>
       
-      {/* 💡 [수정됨] Grid를 제거하고, 선생님이 배치한 좌표(x, y)를 그대로 가져와 렌더링합니다. */}
-      <div style={{ flexGrow: 1, display: 'flex', justifyContent: 'center', alignItems: 'center', overflow: 'hidden', background: '#f1f5f9' }}>
-        <div style={{ width: layoutWidth * fitScale, height: layoutHeight * fitScale, position: 'relative' }}>
-          <div style={{ width: layoutWidth, height: layoutHeight, transform: `scale(${fitScale})`, transformOrigin: 'top left', position: 'absolute', top: 0, left: 0 }}>
-            
-            {seats.map((seat) => (
-              <div key={seat.id} className={`student-desk ${seat.nickname === nickname ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
-                   style={{ 
-                     position: 'absolute', 
-                     left: seat.x - minX, // 0,0 기준점으로 맞춤
-                     top: seat.y - minY, 
-                     width: deskWidth, 
-                     height: deskHeight, 
-                     display: 'flex', flexDirection: 'column', justifyContent: 'center', alignItems: 'center',
-                     margin: 0, padding: `${10 * scale}px`, boxSizing: 'border-box'
-                   }}>
-                <div className="s-desk-num" style={{ fontSize: `${0.8 * scale}rem`, marginBottom: '4px', color: '#94a3b8', fontWeight: 'bold' }}>
-                  #{seat.id + 1}
-                </div>
-                <div className="s-desk-name" style={{ fontSize: `${1.4 * scale}rem`, marginBottom: '4px', fontWeight: '900', color: '#1e293b' }}>
-                   {seat.bid === 900 ? "입찰가능" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
-                </div>
-                <div className="s-desk-bid" style={{ fontSize: `${1.1 * scale}rem`, fontWeight: '800', color: '#ef4444' }}>
-                  {seat.bid === 900 ? "900P" : (seat.bid === 0 ? "랜덤배치" : seat.bid + "P")}
-                </div>
+      {/* 💡 [수정됨] 스크롤이 가능한 큼직한 바둑판 영역 */}
+      <div style={{ flexGrow: 1, overflowY: 'auto', padding: '15px' }}>
+        
+        {/* 맨 위에 추가된 교탁 디자인 */}
+        <div style={{ gridColumn: '1 / -1', background: '#cbd5e1', color: '#334155', padding: '12px', textAlign: 'center', borderRadius: '12px', fontWeight: '900', fontSize: '1.1rem', marginBottom: '15px', border: '2px solid #94a3b8' }}>
+          👨‍🏫 교 탁
+        </div>
+
+        <div style={{ display: 'grid', gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: '10px' }}>
+          {seats.map((seat) => (
+            <div key={seat.id} className={`student-desk ${seat.nickname === nickname ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
+                 style={{ 
+                   background: seat.nickname === nickname ? '#eef2ff' : 'white',
+                   border: `2px solid ${seat.nickname === nickname ? '#4f46e5' : '#cbd5e1'}`,
+                   borderRadius: '12px', padding: '15px 10px', textAlign: 'center', cursor: 'pointer',
+                   boxShadow: '0 2px 4px rgba(0,0,0,0.05)'
+                 }}>
+              <div style={{ fontSize: '0.8rem', color: '#94a3b8', fontWeight: 'bold', marginBottom: '8px' }}>
+                #{seat.id + 1}
               </div>
-            ))}
-          </div>
+              
+              <div style={{ fontSize: '1.1rem', fontWeight: '900', color: '#1e293b', marginBottom: '8px', wordBreak: 'keep-all' }}>
+                 {seat.bid === 900 ? "입찰가능" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
+              </div>
+              
+              <div style={{ fontSize: '1rem', fontWeight: '800', color: '#ef4444' }}>
+                {seat.bid === 900 ? "900P" : (seat.bid === 0 ? "랜덤배치" : seat.bid + "P")}
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 
       {biddingSeat && (
-        <div className="auction-overlay">
-          <div className="auction-modal" style={{ width: '90%', maxWidth: '400px', padding: '1.5rem', textAlign: 'center' }}>
+        <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
+          <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '400px', padding: '1.5rem', borderRadius: '20px', textAlign: 'center' }}>
             <h2 className="auction-title">🪑 좌석 #{biddingSeat.id + 1} 입찰</h2>
             <p style={{fontSize: '0.85rem', color: '#64748b', marginTop: '5px'}}>다른 자리를 선택하면 기존 입찰은 취소됩니다.</p>
             
-            <div className="bid-section" style={{ padding: '1rem', marginTop: '10px' }}>
-              <span className="bid-label">내가 베팅할 금액 (보유: {myPoints}P)</span>
+            <div className="bid-section" style={{ padding: '1rem', marginTop: '10px', background: '#f8fafc', borderRadius: '12px' }}>
+              <span className="bid-label" style={{ display: 'block', marginBottom: '10px', color: '#64748b' }}>내가 베팅할 금액 (보유: {myPoints}P)</span>
               
-              <div className="bid-amount" style={{ fontSize: '3rem', color: tempBid > myPoints ? '#ef4444' : '#4f46e5', fontWeight: '900' }}>
+              <div className="bid-amount" style={{ fontSize: '2.5rem', color: tempBid > myPoints ? '#ef4444' : '#4f46e5', fontWeight: '900' }}>
                 {tempBid} P
               </div>
               
               <div className="bid-controls" style={{ marginTop: '15px', display: 'flex', gap: '8px', justifyContent: 'center' }}>
-                <button onClick={() => setTempBid(p => p + 100)} style={{ flex: 1, padding: '10px', fontSize: '1rem' }}>+ 100</button>
-                <button onClick={() => setTempBid(p => p + 500)} style={{ flex: 1, padding: '10px', fontSize: '1rem' }}>+ 500</button>
-                <button onClick={() => setTempBid(p => p + 1000)} style={{ flex: 1, padding: '10px', fontSize: '1rem' }}>+ 1000</button>
+                <button onClick={() => setTempBid(p => p + 100)} style={{ flex: 1, padding: '12px 0', fontSize: '1.1rem', fontWeight: 'bold', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white' }}>+ 100</button>
+                <button onClick={() => setTempBid(p => p + 500)} style={{ flex: 1, padding: '12px 0', fontSize: '1.1rem', fontWeight: 'bold', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white' }}>+ 500</button>
+                <button onClick={() => setTempBid(p => p + 1000)} style={{ flex: 1, padding: '12px 0', fontSize: '1.1rem', fontWeight: 'bold', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white' }}>+ 1000</button>
               </div>
               
-              <button onClick={() => setTempBid(biddingSeat.bid === 900 ? 1000 : biddingSeat.bid + 100)} style={{ marginTop: '10px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
+              <button onClick={() => setTempBid(biddingSeat.bid === 900 ? 1000 : biddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
                 금액 다시 입력하기
               </button>
             </div>
