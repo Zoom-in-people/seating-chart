@@ -11,7 +11,6 @@ const adjectives = ['붉은', '푸른', '춤추는', '용감한', '날쌘', '지
 const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래', '거북이', '고양이', '강아지', '여우'];
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
-// --- 스마트폰 고유 ID 생성기 ---
 const getDeviceId = () => {
   let id = localStorage.getItem('device_id');
   if (!id) {
@@ -21,7 +20,6 @@ const getDeviceId = () => {
   return id;
 };
 
-// --- 타이머 포맷 함수 ---
 const formatTime = (ms) => {
   if (ms <= 0) return "00:00";
   const totalSec = Math.floor(ms / 1000);
@@ -31,7 +29,7 @@ const formatTime = (ms) => {
 };
 
 // ==========================================
-// 1. 선생님용 메인 화면
+// 1. 선생님용 메인 화면 (+ 예쁜 타이머 UI 적용)
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -45,6 +43,11 @@ function TeacherView() {
   const [editingSeat, setEditingSeat] = useState(null);
   const [editBid, setEditBid] = useState(900);
   const [editName, setEditName] = useState("");
+
+  // 💡 [새로 추가됨] 타이머 설정 모달 관련 상태
+  const [showTimerModal, setShowTimerModal] = useState(false);
+  const [timerMin, setTimerMin] = useState(5);
+  const [timerSec, setTimerSec] = useState(0);
 
   const canvasRef = useRef(null);
   const teacherRef = useRef(null);
@@ -86,7 +89,6 @@ function TeacherView() {
     });
   }, []);
 
-  // 💡 타이머 감소 로직
   useEffect(() => {
     if (!endTime || auctionStatus !== 'active') return;
     const interval = setInterval(() => {
@@ -136,25 +138,32 @@ function TeacherView() {
     }
   };
 
-  const handleStartAuction = () => {
-    const timeStr = window.prompt("⏱️ 경매 진행 시간을 '분' 단위로 입력하세요.\n(예: 5분 진행 시 숫자 5 입력, 취소 시 경매 시작 안 됨)", "5");
-    if (timeStr === null) return; // 취소 누름
-    
-    const minutes = Number(timeStr);
-    if (isNaN(minutes) || minutes <= 0) return alert("올바른 숫자를 입력해주세요!");
+  // 💡 [수정됨] 경매 시작 확인 모달 띄우기 함수
+  const handleOpenTimerModal = () => {
+    setShowTimerModal(true);
+  };
 
-    if (window.confirm(`현재 지정된 자리와 금액을 유지하며 ${minutes}분 동안 경매를 시작합니까?`)) {
+  // 💡 [새로 추가됨] 예쁜 팝업창에서 시간을 설정하고 경매를 확정하는 함수
+  const confirmStartAuction = () => {
+    const min = Number(timerMin) || 0;
+    const sec = Number(timerSec) || 0;
+    const totalMs = (min * 60 + sec) * 1000;
+
+    if (totalMs <= 0) return alert("경매 시간을 1초 이상으로 설정해주세요!");
+
+    if (window.confirm(`현재 지정된 자리와 금액을 유지하며 ${min}분 ${sec}초 동안 경매를 시작합니까?`)) {
       const updates = {};
       
-      // 💡 시작할 때 모든 자리의 현재 금액을 최소 금액(baseBid)으로 고정
       seats.forEach(seat => {
         updates[`seats/${seat.id}/baseBid`] = seat.bid || 900;
       });
       
       updates['status'] = 'active';
       updates['bidCounts'] = null; 
-      updates['endTime'] = Date.now() + minutes * 60 * 1000;
+      updates['endTime'] = Date.now() + totalMs;
       update(ref(db), updates);
+      
+      setShowTimerModal(false); // 팝업 닫기
     }
   };
 
@@ -212,7 +221,7 @@ function TeacherView() {
   const saveSeatEdit = () => {
     const updates = {};
     updates[`seats/${editingSeat.id}/bid`] = editBid;
-    updates[`seats/${editingSeat.id}/baseBid`] = editBid; // 선생님이 입력한 금액이 곧 최소 기준액
+    updates[`seats/${editingSeat.id}/baseBid`] = editBid; 
     
     const trimmedName = editName.replace(/\s+/g, '');
     if (trimmedName) {
@@ -314,8 +323,9 @@ function TeacherView() {
           
           {auctionStatus !== 'active' ? (
             <>
+              {/* 💡 경매 시작 버튼 누르면 예쁜 모달창이 뜨게 연결 */}
               <button 
-                onClick={handleStartAuction} 
+                onClick={handleOpenTimerModal} 
                 style={{ width: '100%', padding: '16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.1rem', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)' }}
               >
                 ▶️ 경매 시작 (+ 타이머)
@@ -399,6 +409,46 @@ function TeacherView() {
         ))}
       </main>
 
+      {/* 💡 [새로 추가됨] 예쁜 타이머 설정 팝업 모달 */}
+      {showTimerModal && (
+        <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
+          <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '350px', padding: '2rem', borderRadius: '16px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ marginTop: 0, color: '#1e293b' }}>⏱️ 경매 타이머 설정</h2>
+            <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '20px' }}>경매 진행 시간을 설정해 주세요.</p>
+            
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '15px', marginBottom: '20px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <input 
+                  type="number" 
+                  min="0"
+                  value={timerMin} 
+                  onChange={(e) => setTimerMin(e.target.value)}
+                  style={{ width: '80px', padding: '12px', borderRadius: '8px', border: '2px solid #cbd5e1', textAlign: 'center', fontSize: '1.5rem', fontWeight: 'bold', color: '#ef4444' }}
+                />
+                <span style={{ marginTop: '5px', fontWeight: 'bold', color: '#475569' }}>분</span>
+              </div>
+              <span style={{ fontSize: '2rem', fontWeight: 'bold', color: '#94a3b8', paddingBottom: '20px' }}>:</span>
+              <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+                <input 
+                  type="number" 
+                  min="0" max="59"
+                  value={timerSec} 
+                  onChange={(e) => setTimerSec(e.target.value)}
+                  style={{ width: '80px', padding: '12px', borderRadius: '8px', border: '2px solid #cbd5e1', textAlign: 'center', fontSize: '1.5rem', fontWeight: 'bold', color: '#ef4444' }}
+                />
+                <span style={{ marginTop: '5px', fontWeight: 'bold', color: '#475569' }}>초</span>
+              </div>
+            </div>
+
+            <div style={{ display: 'flex', gap: '10px', marginTop: '25px' }}>
+              <button onClick={() => setShowTimerModal(false)} style={{ flex: 1, padding: '14px', borderRadius: '8px', border: 'none', background: '#e2e8f0', color: '#475569', cursor: 'pointer', fontWeight: 'bold', fontSize: '1rem' }}>취소</button>
+              <button onClick={confirmStartAuction} style={{ flex: 2, padding: '14px', borderRadius: '8px', border: 'none', background: '#ef4444', color: 'white', cursor: 'pointer', fontWeight: 'bold', fontSize: '1rem' }}>▶️ 경매 확정 시작</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* 좌석 수동 설정 모달창 (기존 유지) */}
       {editingSeat && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '350px', padding: '2rem', borderRadius: '16px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
@@ -448,7 +498,6 @@ function StudentView() {
   const [isJoined, setIsJoined] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   
-  // 💡 [새로 추가됨] 입장 규칙 안내 팝업 상태
   const [showWelcome, setShowWelcome] = useState(false);
   
   const [seats, setSeats] = useState([]);
@@ -535,7 +584,6 @@ function StudentView() {
     });
   }, []);
 
-  // 💡 타이머 감소 로직
   useEffect(() => {
     if (!endTime || auctionStatus !== 'active') return;
     const interval = setInterval(() => {
@@ -582,7 +630,7 @@ function StudentView() {
     localStorage.setItem('student_nickname', newNick);
     
     setIsJoining(false);
-    setShowWelcome(true); // 💡 입장 시 환영 안내 팝업 띄우기
+    setShowWelcome(true); 
   };
 
   const handleLogout = async () => {
@@ -607,12 +655,12 @@ function StudentView() {
     if (seat.bid === 0) return alert("선생님께서 랜덤으로 배치 완료한 자리는 빼앗을 수 없습니다!");
     
     setBiddingSeat(seat);
-    // 💡 빈 자리여도 최소 금액(baseBid)을 기준으로 모달 시작액을 제안합니다.
-    setTempBid(!seat.realName && seat.bid === 900 ? 1000 : seat.bid + 100);
+    setTempBid(!seat.realName && seat.bid === (seat.baseBid || 900) ? (seat.baseBid || 900) + 100 : seat.bid + 100);
   };
 
   const confirmBid = () => {
-    if (tempBid <= biddingSeat.bid && (biddingSeat.bid !== 900 || biddingSeat.realName)) {
+    const base = biddingSeat.baseBid || 900;
+    if (tempBid <= biddingSeat.bid && (biddingSeat.bid !== base || biddingSeat.realName)) {
       return alert("현재 자리의 입찰 포인트보다 무조건 더 높은 금액을 제시해야 합니다!");
     }
     if (tempBid > myPoints) {
@@ -625,9 +673,8 @@ function StudentView() {
     const updates = {};
     seats.forEach(seat => {
       if (seat.realName === realName && seat.id !== biddingSeat.id) {
-        // 💡 다른 자리로 이동하면 기존 자리는 선생님의 최초 설정액(baseBid)으로 되돌아갑니다.
-        const base = seat.baseBid || 900;
-        updates[`seats/${seat.id}/bid`] = base;
+        const oldBase = seat.baseBid || 900;
+        updates[`seats/${seat.id}/bid`] = oldBase;
         updates[`seats/${seat.id}/nickname`] = '';
         updates[`seats/${seat.id}/realName`] = '';
         updates[`seats/${seat.id}/isFixed`] = null; 
@@ -709,8 +756,6 @@ function StudentView() {
             <div style={{ background: '#3b82f6', color: 'white', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
               잔여 입찰: {Math.max(0, 5 - bidCount)}회
             </div>
-            
-            {/* 💡 타이머 표시 뱃지 */}
             <div className="status-badge" style={{ background: auctionStatus === 'active' ? (timeLeft === 0 ? '#94a3b8' : '#ef4444') : '#f59e0b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
               {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? (endTime ? `⏱️ ${formatTime(timeLeft)}` : '🔥 진행중') : '🛑 종료됨'}
             </div>
@@ -748,7 +793,6 @@ function StudentView() {
                 #{seat.id + 1}
               </div>
               
-              {/* 💡 [변경됨] 주인이 없으면 무조건 '입찰가능' 표시 */}
               <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
                  {!seat.realName 
                    ? "입찰가능" 
@@ -761,7 +805,6 @@ function StudentView() {
                  }
               </div>
               
-              {/* 💡 [변경됨] 선생님이 빈자리에 포인트를 올렸으면 그 포인트가 보임 */}
               <div style={{ fontSize: `${1.0 * fontScale}rem`, fontWeight: '800', color: '#ef4444' }}>
                 {!seat.realName ? `${seat.bid}P` : (seat.bid === 0 ? "랜덤" : seat.bid + "P")}
               </div>
@@ -770,7 +813,6 @@ function StudentView() {
         </div>
       </div>
 
-      {/* 💡 [새로 추가됨] 입장 규칙 안내 팝업 모달 */}
       {showWelcome && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 999 }}>
           <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '400px', padding: '2rem', borderRadius: '16px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
@@ -781,7 +823,7 @@ function StudentView() {
               <li style={{ marginBottom: '10px' }}>경매 입찰 가능 횟수는 <strong style={{ color: '#ef4444', fontSize: '1.2em' }}>'5회'</strong>입니다. 이 외에 참가는 불가합니다. (취소해도 횟수 차감)</li>
               <li style={{ marginBottom: '10px' }}>경매 <strong>가능 시간(타이머)</strong>을 보시고 주의해서 진행하세요.</li>
               <li style={{ marginBottom: '10px' }}>이번에 입찰한 자리의 금액이 <strong>다음 입찰의 최소 금액</strong>이 됩니다.</li>
-              <li>주인이 정해지지 않은 자리는 다음에 지정된 <strong>최소 금액(기본 1000P)</strong>부터 시작됩니다.</li>
+              <li>주인이 정해지지 않은 자리는 선생님이 설정한 <strong>최소 금액(기본 900P)</strong>부터 시작됩니다.</li>
             </ol>
             
             <button 
@@ -816,7 +858,7 @@ function StudentView() {
                 <button onClick={() => setTempBid(p => p + 1000)} style={{ flex: 1, padding: '12px 0', fontSize: '1.1rem', fontWeight: 'bold', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white' }}>+ 1000</button>
               </div>
               
-              <button onClick={() => setTempBid(!biddingSeat.realName && biddingSeat.bid === 900 ? 1000 : biddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
+              <button onClick={() => setTempBid(!biddingSeat.realName && biddingSeat.bid === (biddingSeat.baseBid || 900) ? (biddingSeat.baseBid || 900) + 100 : biddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
                 금액 다시 입력하기
               </button>
             </div>
