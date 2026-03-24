@@ -21,7 +21,7 @@ const getDeviceId = () => {
 };
 
 // ==========================================
-// 1. 선생님용 메인 화면 (+ 좌석 수동 설정 기능)
+// 1. 선생님용 메인 화면
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -30,7 +30,6 @@ function TeacherView() {
   const [seats, setSeats] = useState([]);
   const [auctionStatus, setAuctionStatus] = useState("waiting");
 
-  // 💡 좌석 수동 설정을 위한 상태 변수
   const [editingSeat, setEditingSeat] = useState(null);
   const [editBid, setEditBid] = useState(900);
   const [editName, setEditName] = useState("");
@@ -96,7 +95,6 @@ function TeacherView() {
     }
   };
 
-  // 💡 [새로 추가됨] 강제 초기화 버튼 (모든 자리 비우기)
   const handleFullReset = () => {
     if (window.confirm("정말 모든 자리를 완전히 초기화하시겠습니까?\n\n(모든 학생 배치가 해제되고 900P 빈 자리로 돌아갑니다.)")) {
       const updates = {};
@@ -110,7 +108,6 @@ function TeacherView() {
     }
   };
 
-  // 💡 [수정됨] 기존 상태를 유지하며 경매만 다시 켭니다.
   const handleStartAuction = () => {
     if (window.confirm("현재 설정된 금액과 배치 상태를 유지한 채로 블라인드 경매를 시작합니까?")) {
       update(ref(db, 'status'), 'active');
@@ -161,14 +158,12 @@ function TeacherView() {
     }
   };
 
-  // 💡 [새로 추가됨] 좌석 수동 설정창 열기
   const openEditModal = (seat) => {
     setEditingSeat(seat);
     setEditBid(seat.bid === 900 ? 900 : seat.bid);
     setEditName(seat.realName || "");
   };
 
-  // 💡 [새로 추가됨] 좌석 수동 설정 저장 (파이어베이스 업데이트)
   const saveSeatEdit = () => {
     const updates = {};
     updates[`seats/${editingSeat.id}/bid`] = editBid;
@@ -177,10 +172,8 @@ function TeacherView() {
     updates[`seats/${editingSeat.id}/realName`] = trimmedName;
 
     if (trimmedName) {
-      // 이름이 추가되었는데 닉네임이 없으면 새로 생성 (학생화면에서 익명 유지용)
       updates[`seats/${editingSeat.id}/nickname`] = editingSeat.nickname || generateNickname();
     } else {
-      // 이름을 지웠으면 닉네임도 삭제 (완전한 빈자리화)
       updates[`seats/${editingSeat.id}/nickname`] = '';
       if(editBid === 900) updates[`seats/${editingSeat.id}/bid`] = 900;
     }
@@ -269,7 +262,6 @@ function TeacherView() {
           
           {auctionStatus !== 'active' ? (
             <>
-              {/* 💡 이어서 시작하는 경매 버튼 */}
               <button 
                 onClick={handleStartAuction} 
                 style={{ width: '100%', padding: '16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.1rem', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)' }}
@@ -277,7 +269,6 @@ function TeacherView() {
                 ▶️ 경매 시작 (이전 상태 유지)
               </button>
 
-              {/* 💡 완전 초기화 버튼 분리 */}
               <button 
                 onClick={handleFullReset} 
                 style={{ width: '100%', padding: '12px', background: '#f8fafc', color: '#ef4444', border: '2px solid #ef4444', borderRadius: '12px', fontSize: '1rem', fontWeight: '700', cursor: 'pointer', marginTop: '10px' }}
@@ -321,8 +312,8 @@ function TeacherView() {
           <div ref={teacherRef} className="object teacher-desk">교 탁</div>
         </Draggable>
 
+        {/* 💡 [에러 원인 해결] Draggable 컴포넌트에 있던 주석 구문을 안전하게 제거했습니다. */}
         {seats.map((seat) => (
-          {/* 💡 cancel=".cancel-drag" 추가: 설정 버튼 누를 때 드래그 방지 */}
           <Draggable 
             key={seat.id} 
             nodeRef={seat.nodeRef} 
@@ -334,7 +325,6 @@ function TeacherView() {
               <header style={{ fontSize: `${0.8 * scale}rem`, marginBottom: `${8 * scale}px`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>좌석 #{seat.id + 1}</span>
                 
-                {/* 💡 경매가 진행 중이 아닐 때만 수동 설정 버튼(톱니바퀴) 표시 */}
                 {auctionStatus !== 'active' && (
                   <button 
                     className="cancel-drag"
@@ -358,7 +348,6 @@ function TeacherView() {
         ))}
       </main>
 
-      {/* 💡 [새로 추가됨] 교사용 수동 설정 모달창 */}
       {editingSeat && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '350px', padding: '2rem', borderRadius: '16px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
@@ -548,7 +537,6 @@ function StudentView() {
 
     const updates = {};
     seats.forEach(seat => {
-      // 내가 만약 다른 자리를 직접 찍어서 입찰한다면 기존 내 자리는 빈자리로 돌아감
       if (seat.realName === realName && seat.id !== biddingSeat.id) {
         updates[`seats/${seat.id}/bid`] = 900;
         updates[`seats/${seat.id}/nickname`] = '';
