@@ -6,23 +6,8 @@ import { db } from './firebase';
 import { ref, onValue, set, update, get, onDisconnect, remove } from "firebase/database";
 import './App.css';
 
-// --- 무작위 별명 생성기 ---
-const adjectives = ['붉은', '푸른', '춤추는', '용감한', '날쌘', '지혜로운', '신비한', '고독한', '즐거운', '빛나는'];
-const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래', '거북이', '고양이', '강아지', '여우'];
-const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
-
-// --- 스마트폰 고유 ID 생성기 (튕김 방지용) ---
-const getDeviceId = () => {
-  let id = localStorage.getItem('device_id');
-  if (!id) {
-    id = Math.random().toString(36).substring(2) + Date.now().toString(36);
-    localStorage.setItem('device_id', id);
-  }
-  return id;
-};
-
 // ==========================================
-// 1. 선생님용 메인 화면
+// 1. 선생님용 메인 화면 (익명 제거 및 실명 표시)
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -53,7 +38,7 @@ function TeacherView() {
         setSeats(prevSeats => {
           const currentScale = 4 / (data.config?.cols || 4);
           return Array(Number(data.config?.seatCount || 24)).fill(null).map((_, i) => {
-            const fbSeat = data.seats && data.seats[i] ? data.seats[i] : { bid: 900, nickname: '', realName: '' };
+            const fbSeat = data.seats && data.seats[i] ? data.seats[i] : { bid: 900, realName: '' };
             const prevSeat = prevSeats.find(s => s.id === i);
             
             return {
@@ -93,11 +78,10 @@ function TeacherView() {
   };
 
   const handleStartAuction = () => {
-    if (window.confirm("블라인드 경매를 시작합니까? 모든 자리가 900P로 초기화됩니다.")) {
+    if (window.confirm("공개 실명 경매를 시작합니까? 모든 자리가 900P로 초기화됩니다.")) {
       const updates = {};
       for (let i = 0; i < seatCount; i++) {
         updates[`seats/${i}/bid`] = 900;
-        updates[`seats/${i}/nickname`] = '';
         updates[`seats/${i}/realName`] = '';
       }
       updates['status'] = 'active';
@@ -106,7 +90,7 @@ function TeacherView() {
   };
 
   const handleEndAuction = () => {
-    if (window.confirm("경매를 종료하고 학생들의 진짜 이름을 공개하시겠습니까?")) {
+    if (window.confirm("경매를 최종 종료하시겠습니까?")) {
       set(ref(db, 'status'), 'ended');
     }
   };
@@ -129,7 +113,6 @@ function TeacherView() {
         if (i < shuffled.length) {
           const seatId = emptySeats[i].id;
           updates[`seats/${seatId}/bid`] = 0; 
-          updates[`seats/${seatId}/nickname`] = "🎲 랜덤배치";
           updates[`seats/${seatId}/realName`] = shuffled[i];
           assignCount++;
         }
@@ -225,11 +208,11 @@ function TeacherView() {
         </div>
 
         <div className="control-group">
-          <label>3. 블라인드 경매 컨트롤</label>
+          <label>3. 공개 경매 컨트롤</label>
           {auctionStatus !== 'active' ? (
-            <button className="btn-auction-start" onClick={handleStartAuction}>🔥 경매 시작 (900P 셋팅)</button>
+            <button className="btn-auction-start" onClick={handleStartAuction}>🔥 실명 경매 시작 (900P)</button>
           ) : (
-            <button className="btn-auction-end" onClick={handleEndAuction}>🛑 경매 종료 및 정체 공개!</button>
+            <button className="btn-auction-end" onClick={handleEndAuction}>🛑 경매 최종 종료</button>
           )}
           
           <button 
@@ -276,8 +259,9 @@ function TeacherView() {
                 좌석 #{seat.id + 1}
               </header>
               <div className="details" style={{justifyContent: 'center'}}>
-                <div className="name-tag" style={{ fontSize: `${1.8 * scale}rem`, color: auctionStatus === 'ended' ? '#e11d48' : '#1e293b' }}>
-                  {seat.bid === 900 ? "빈 자리" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
+                {/* 💡 익명 대신 무조건 실명이 뜨도록 수정 */}
+                <div className="name-tag" style={{ fontSize: `${1.8 * scale}rem`, color: '#1e293b' }}>
+                  {seat.bid === 900 ? "빈 자리" : seat.realName}
                 </div>
                 <div className="score-box" style={{ fontSize: `${1.1 * scale}rem`, width: '100%', marginTop: `${15 * scale}px` }}>
                   {seat.bid === 900 ? "900 P" : (seat.bid === 0 ? "랜덤 배치" : seat.bid + " P")}
@@ -291,12 +275,21 @@ function TeacherView() {
   );
 }
 
+// --- 스마트폰 고유 ID 생성기 (튕김 방지용) ---
+const getDeviceId = () => {
+  let id = localStorage.getItem('device_id');
+  if (!id) {
+    id = Math.random().toString(36).substring(2) + Date.now().toString(36);
+    localStorage.setItem('device_id', id);
+  }
+  return id;
+};
+
 // ==========================================
-// 2. 학생용 스마트폰 화면
+// 2. 학생용 스마트폰 화면 (실명 기반)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
-  const [nickname, setNickname] = useState("");
   const [isJoined, setIsJoined] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   
@@ -318,11 +311,11 @@ function StudentView() {
       const data = await response.json();
       
       const dataArray = Array.isArray(data) ? data : (data.data || []);
+      const targetName = name.replace(/\s+/g, '');
       
-      // 💡 요청하신 대로 status 탭의 B열("이름" 헤더)만 명확하게 검사합니다.
       const studentData = dataArray.find(row => {
         const sheetName = String(row["이름"] || "").replace(/\s+/g, '');
-        return sheetName === name; // name은 이미 공백이 제거된 상태로 들어옴
+        return sheetName === targetName;
       });
       
       if (studentData) {
@@ -342,11 +335,9 @@ function StudentView() {
 
   useEffect(() => {
     const savedName = localStorage.getItem('student_realName');
-    const savedNick = localStorage.getItem('student_nickname');
     
-    if (savedName && savedNick) {
+    if (savedName) {
       setRealName(savedName);
-      setNickname(savedNick);
       setIsJoined(true);
       fetchMyPoints(savedName);
 
@@ -367,14 +358,14 @@ function StudentView() {
         }
       }
     });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleJoin = async () => {
-    // 💡 [핵심 마법 1] 아이들이 어떻게 띄어쓰기를 하든 공백을 100% 제거합니다.
     const normalizedName = realName.replace(/\s+/g, '');
     if (!normalizedName) return alert("이름을 입력해주세요!");
 
-    setRealName(normalizedName); // 입력창의 이름도 공백없는 이름으로 강제 변경
+    setRealName(normalizedName);
     setIsJoining(true);
 
     const userRef = ref(db, `activeUsers/${normalizedName}`);
@@ -398,16 +389,11 @@ function StudentView() {
     await set(userRef, deviceId.current);
     onDisconnect(userRef).remove();
 
-    const newNick = generateNickname();
-    setNickname(newNick);
     setIsJoined(true);
-    
-    // 로컬 저장소에도 공백 없는 이름 저장
     localStorage.setItem('student_realName', normalizedName);
-    localStorage.setItem('student_nickname', newNick);
     
     setIsJoining(false);
-    alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
+    alert(`환영합니다! [${normalizedName}] 학생, 입장이 완료되었습니다.`);
   };
 
   const handleLogout = async () => {
@@ -418,9 +404,7 @@ function StudentView() {
       }
 
       localStorage.removeItem('student_realName');
-      localStorage.removeItem('student_nickname');
       setRealName("");
-      setNickname("");
       setMyPoints(0);
       setIsJoined(false);
     }
@@ -444,17 +428,14 @@ function StudentView() {
 
     const updates = {};
     seats.forEach(seat => {
-      // 💡 [핵심 마법 2] 별명(nickname)이 아닌 절대 변하지 않는 '진짜 이름(realName)'으로 비교하여, 
-      // 캐시를 지우고 다른 별명을 받아와서 자리를 2개 차지하는 꼼수를 원천 차단합니다.
+      // 내 이름으로 입찰된 기존 자리가 있으면 비우기
       if (seat.realName === realName && seat.id !== biddingSeat.id) {
         updates[`seats/${seat.id}/bid`] = 900;
-        updates[`seats/${seat.id}/nickname`] = '';
         updates[`seats/${seat.id}/realName`] = '';
       }
     });
 
     updates[`seats/${biddingSeat.id}/bid`] = tempBid;
-    updates[`seats/${biddingSeat.id}/nickname`] = nickname;
     updates[`seats/${biddingSeat.id}/realName`] = realName;
 
     update(ref(db), updates);
@@ -465,7 +446,6 @@ function StudentView() {
     if (window.confirm("정말 이 자리의 입찰을 취소하시겠습니까?\n취소하면 즉시 빈 자리(900P)가 됩니다.")) {
       const updates = {};
       updates[`seats/${biddingSeat.id}/bid`] = 900;
-      updates[`seats/${biddingSeat.id}/nickname`] = '';
       updates[`seats/${biddingSeat.id}/realName`] = '';
       update(ref(db), updates);
       setBiddingSeat(null); 
@@ -475,7 +455,7 @@ function StudentView() {
   if (!isJoined) {
     return (
       <div className="student-login">
-        <h2>블라인드 자리 경매</h2>
+        <h2>실명 공개 자리 경매</h2>
         <input 
           type="text" 
           placeholder="본인 실명 입력 (예: 김철수)" 
@@ -488,7 +468,7 @@ function StudentView() {
           disabled={isJoining}
           style={{ background: isJoining ? '#94a3b8' : '#4f46e5' }}
         >
-          {isJoining ? "명단 확인 중...⏳" : "입장하기 (암호명 발급)"}
+          {isJoining ? "명단 확인 중...⏳" : "입장하기"}
         </button>
       </div>
     );
@@ -514,7 +494,7 @@ function StudentView() {
     <div className="student-app" style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f8fafc' }}>
       <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 15px', flexShrink: 0, background: '#1e293b', color: 'white' }}>
         <div style={{ lineHeight: '1.4' }}>
-          <div>내 암호명: <strong>{nickname}</strong> <span style={{fontSize: '0.8rem', fontWeight: 'normal', color: '#cbd5e1'}}>({realName})</span></div>
+          <div>접속자: <strong>{realName}</strong></div>
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
         </div>
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
@@ -540,12 +520,12 @@ function StudentView() {
           </div>
 
           {gridSeats.map((seat) => (
-            <div key={seat.id} className={`student-desk ${seat.nickname === nickname ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
+            <div key={seat.id} className={`student-desk ${seat.realName === realName ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
                  style={{ 
                    gridColumn: seat.c,
                    gridRow: seat.r + 1, 
-                   background: seat.nickname === nickname ? '#eef2ff' : 'white',
-                   border: `2px solid ${seat.nickname === nickname ? '#4f46e5' : '#cbd5e1'}`,
+                   background: seat.realName === realName ? '#eef2ff' : 'white',
+                   border: `2px solid ${seat.realName === realName ? '#4f46e5' : '#cbd5e1'}`,
                    borderRadius: '10px', padding: '10px 5px', textAlign: 'center', cursor: 'pointer',
                    boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
                    display: 'flex', flexDirection: 'column', justifyContent: 'center'
@@ -554,16 +534,9 @@ function StudentView() {
                 #{seat.id + 1}
               </div>
               
+              {/* 💡 익명을 제거하고 실명만 표시하도록 수정 */}
               <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
-                 {seat.bid === 900 
-                   ? "입찰가능" 
-                   : (auctionStatus === 'ended' 
-                       ? seat.realName 
-                       : (seat.nickname === nickname 
-                           ? <>{seat.nickname}<br/><span style={{fontSize: '0.8em', color: '#4f46e5'}}>({realName})</span></> 
-                           : seat.nickname)
-                     )
-                 }
+                 {seat.bid === 900 ? "입찰가능" : seat.realName}
               </div>
               
               <div style={{ fontSize: `${1.0 * fontScale}rem`, fontWeight: '800', color: '#ef4444' }}>
