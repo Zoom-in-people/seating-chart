@@ -11,6 +11,7 @@ const adjectives = ['붉은', '푸른', '춤추는', '용감한', '날쌘', '지
 const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래', '거북이', '고양이', '강아지', '여우'];
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
+// --- 스마트폰 고유 ID 생성기 (튕김 방지용) ---
 const getDeviceId = () => {
   let id = localStorage.getItem('device_id');
   if (!id) {
@@ -102,15 +103,17 @@ function TeacherView() {
         updates[`seats/${i}/bid`] = 900;
         updates[`seats/${i}/nickname`] = '';
         updates[`seats/${i}/realName`] = '';
+        updates[`seats/${i}/isFixed`] = null;
       }
       updates['status'] = 'waiting';
+      updates['bidCounts'] = null; // 💡 학생들의 잔여 입찰 횟수 초기화
       update(ref(db), updates);
     }
   };
 
   const handleStartAuction = () => {
-    if (window.confirm("현재 설정된 금액과 배치 상태를 유지한 채로 블라인드 경매를 시작합니까?")) {
-      update(ref(db, 'status'), 'active');
+    if (window.confirm("현재 설정된 금액과 배치 상태를 유지한 채로 블라인드 경매를 시작합니까?\n\n(학생들의 입찰 횟수가 다시 5회로 초기화됩니다.)")) {
+      update(ref(db), { status: 'active', bidCounts: null });
     }
   };
 
@@ -169,12 +172,14 @@ function TeacherView() {
     updates[`seats/${editingSeat.id}/bid`] = editBid;
     
     const trimmedName = editName.replace(/\s+/g, '');
-    updates[`seats/${editingSeat.id}/realName`] = trimmedName;
-
     if (trimmedName) {
+      updates[`seats/${editingSeat.id}/realName`] = trimmedName;
       updates[`seats/${editingSeat.id}/nickname`] = editingSeat.nickname || generateNickname();
+      updates[`seats/${editingSeat.id}/isFixed`] = true; // 💡 선생님이 지정한 자리는 isFixed 처리
     } else {
+      updates[`seats/${editingSeat.id}/realName`] = '';
       updates[`seats/${editingSeat.id}/nickname`] = '';
+      updates[`seats/${editingSeat.id}/isFixed`] = null;
       if(editBid === 900) updates[`seats/${editingSeat.id}/bid`] = 900;
     }
     
@@ -312,7 +317,6 @@ function TeacherView() {
           <div ref={teacherRef} className="object teacher-desk">교 탁</div>
         </Draggable>
 
-        {/* 💡 [에러 원인 해결] Draggable 컴포넌트에 있던 주석 구문을 안전하게 제거했습니다. */}
         {seats.map((seat) => (
           <Draggable 
             key={seat.id} 
@@ -336,11 +340,13 @@ function TeacherView() {
                 )}
               </header>
               <div className="details" style={{justifyContent: 'center'}}>
+                {/* 💡 [변경됨] 수동 할당(isFixed)된 자리는 선생님 화면에 실명이 보입니다. */}
                 <div className="name-tag" style={{ fontSize: `${1.8 * scale}rem`, color: auctionStatus === 'ended' ? '#e11d48' : '#1e293b' }}>
-                  {seat.bid === 900 && !seat.realName ? "빈 자리" : (auctionStatus === 'ended' ? seat.realName : seat.nickname)}
+                  {!seat.realName ? "빈 자리" : (seat.isFixed || auctionStatus === 'ended' ? seat.realName : seat.nickname)}
                 </div>
+                {/* 💡 [변경됨] 빈자리여도 선생님이 지정한 포인트가 있으면 900P 대신 해당 포인트 노출 */}
                 <div className="score-box" style={{ fontSize: `${1.1 * scale}rem`, width: '100%', marginTop: `${15 * scale}px` }}>
-                  {seat.bid === 900 && !seat.realName ? "900 P" : (seat.bid === 0 ? "랜덤 배치" : seat.bid + " P")}
+                  {seat.bid === 0 ? "랜덤 배치" : `${seat.bid} P`}
                 </div>
               </div>
             </div>
@@ -354,14 +360,18 @@ function TeacherView() {
             <h2 style={{ marginTop: 0, color: '#1e293b' }}>🪑 좌석 #{editingSeat.id + 1} 설정</h2>
             
             <div style={{ margin: '20px 0', textAlign: 'left' }}>
-              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#475569' }}>지정할 학생 이름 (없으면 빈칸)</label>
-              <input 
-                type="text" 
+              <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#475569' }}>지정할 학생 선택</label>
+              {/* 💡 [변경됨] 입력창 대신 명단 드롭다운(select) 적용 */}
+              <select 
                 value={editName} 
                 onChange={(e) => setEditName(e.target.value)}
-                placeholder="학생 이름 입력"
                 style={{ width: '100%', padding: '12px', borderRadius: '8px', border: '1px solid #cbd5e1', boxSizing: 'border-box', fontSize: '1rem' }}
-              />
+              >
+                <option value="">-- 빈 자리 (지정 안함) --</option>
+                {studentInput.split(/[,\n]+/).map(n => n.trim()).filter(n => n).map((name, idx) => (
+                  <option key={idx} value={name}>{name}</option>
+                ))}
+              </select>
             </div>
 
             <div style={{ margin: '20px 0', textAlign: 'left' }}>
@@ -386,7 +396,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면
+// 2. 학생용 스마트폰 화면 (+ 잔여 입찰 횟수 5회 제한 적용)
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -401,6 +411,9 @@ function StudentView() {
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
+  
+  // 💡 [새로 추가됨] 본인의 입찰 횟수 저장 상태 (최대 5회)
+  const [bidCount, setBidCount] = useState(0);
 
   const deviceId = useRef(getDeviceId());
 
@@ -433,6 +446,17 @@ function StudentView() {
       return false; 
     }
   };
+
+  // 💡 실시간 입찰 횟수(bidCounts) 연동
+  useEffect(() => {
+    if (realName && isJoined) {
+      const bidRef = ref(db, `bidCounts/${realName}`);
+      const unsubscribe = onValue(bidRef, (snap) => {
+        setBidCount(snap.val() || 0);
+      });
+      return () => unsubscribe();
+    }
+  }, [realName, isJoined]);
 
   useEffect(() => {
     const savedName = localStorage.getItem('student_realName');
@@ -524,15 +548,21 @@ function StudentView() {
     if (seat.bid === 0) return alert("선생님께서 랜덤으로 배치 완료한 자리는 빼앗을 수 없습니다!");
     
     setBiddingSeat(seat);
-    setTempBid(seat.bid === 900 ? 1000 : seat.bid + 100);
+    // 이월된 포인트 방어 시 무조건 현재 포인트의 +100부터 시작되도록 보정
+    setTempBid(seat.bid === 900 && !seat.realName ? 1000 : seat.bid + 100);
   };
 
   const confirmBid = () => {
-    if (tempBid <= biddingSeat.bid && biddingSeat.bid !== 900) {
-      return alert("현재 입찰가보다 높은 금액을 제시해야 합니다!");
+    if (tempBid <= biddingSeat.bid && (biddingSeat.bid !== 900 || biddingSeat.realName)) {
+      return alert("현재 자리의 포인트보다 무조건 더 높은 금액을 제시해야 합니다!");
     }
     if (tempBid > myPoints) {
       return alert(`보유 포인트가 부족합니다! (현재 잔여: ${myPoints}P)`);
+    }
+    
+    // 💡 [핵심] 입찰 횟수 검사
+    if (bidCount >= 5) {
+      return alert("🚫 입찰 잔여 횟수(5회)를 모두 소진하였습니다!\n더 이상 다른 자리에 입찰할 수 없습니다.");
     }
 
     const updates = {};
@@ -541,23 +571,30 @@ function StudentView() {
         updates[`seats/${seat.id}/bid`] = 900;
         updates[`seats/${seat.id}/nickname`] = '';
         updates[`seats/${seat.id}/realName`] = '';
+        updates[`seats/${seat.id}/isFixed`] = null; // 학생이 이동하면 지정석 해제
       }
     });
 
     updates[`seats/${biddingSeat.id}/bid`] = tempBid;
     updates[`seats/${biddingSeat.id}/nickname`] = nickname;
     updates[`seats/${biddingSeat.id}/realName`] = realName;
+    updates[`seats/${biddingSeat.id}/isFixed`] = null; // 학생이 덮어쓰면 지정석 속성 제거
+
+    // 💡 [핵심] 입찰할 때마다 횟수 1 차감 (Firebase에는 쓴 횟수 +1로 기록)
+    updates[`bidCounts/${realName}`] = bidCount + 1;
 
     update(ref(db), updates);
     setBiddingSeat(null); 
   };
 
   const handleCancelBid = () => {
-    if (window.confirm("정말 이 자리의 입찰을 취소하시겠습니까?\n취소하면 즉시 빈 자리(900P)가 됩니다.")) {
+    // 취소해도 입찰 횟수는 복구되지 않음을 경고
+    if (window.confirm("정말 이 자리의 입찰을 취소하시겠습니까?\n\n⚠️ 주의: 취소해도 차감된 '입찰 잔여 횟수'는 복구되지 않습니다!")) {
       const updates = {};
       updates[`seats/${biddingSeat.id}/bid`] = 900;
       updates[`seats/${biddingSeat.id}/nickname`] = '';
       updates[`seats/${biddingSeat.id}/realName`] = '';
+      updates[`seats/${biddingSeat.id}/isFixed`] = null;
       update(ref(db), updates);
       setBiddingSeat(null); 
     }
@@ -608,9 +645,16 @@ function StudentView() {
           <div>내 암호명: <strong>{nickname}</strong> <span style={{fontSize: '0.8rem', fontWeight: 'normal', color: '#cbd5e1'}}>({realName})</span></div>
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
         </div>
+        
+        {/* 💡 [추가됨] 상단 잔여 입찰 횟수 및 뱃지 영역 */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
-          <div className="status-badge" style={{ background: auctionStatus === 'active' ? '#ef4444' : '#f59e0b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
-            {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ background: '#3b82f6', color: 'white', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+              잔여 입찰: {Math.max(0, 5 - bidCount)}회
+            </div>
+            <div className="status-badge" style={{ background: auctionStatus === 'active' ? '#ef4444' : '#f59e0b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+              {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
+            </div>
           </div>
           <button onClick={handleLogout} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #94a3b8', borderRadius: '6px', fontSize: '0.75rem', padding: '4px 8px', cursor: 'pointer' }}>
             로그아웃
@@ -648,8 +692,8 @@ function StudentView() {
               <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
                  {seat.bid === 900 && !seat.realName 
                    ? "입찰가능" 
-                   : (auctionStatus === 'ended' 
-                       ? seat.realName 
+                   : (auctionStatus === 'ended' || seat.isFixed 
+                       ? seat.realName // 종료되었거나 선생님이 수동 지정한 자리는 진짜 이름 노출
                        : (seat.realName === realName 
                            ? <>{seat.nickname}<br/><span style={{fontSize: '0.8em', color: '#4f46e5'}}>({realName})</span></> 
                            : seat.nickname)
@@ -672,6 +716,10 @@ function StudentView() {
             <p style={{fontSize: '0.85rem', color: '#64748b', marginTop: '5px'}}>다른 자리를 선택하면 기존 입찰은 취소됩니다.</p>
             
             <div className="bid-section" style={{ padding: '1rem', marginTop: '10px', background: '#f8fafc', borderRadius: '12px' }}>
+              {/* 💡 잔여 횟수 경고 문구 추가 */}
+              <span className="bid-label" style={{ display: 'block', marginBottom: '10px', color: '#ef4444', fontWeight: 'bold' }}>
+                ⚠️ 신중하게 입찰하세요! (남은 입찰: {Math.max(0, 5 - bidCount)}회)
+              </span>
               <span className="bid-label" style={{ display: 'block', marginBottom: '10px', color: '#64748b' }}>내가 베팅할 금액 (보유: {myPoints}P)</span>
               
               <div className="bid-amount" style={{ fontSize: '2.5rem', color: tempBid > myPoints ? '#ef4444' : '#4f46e5', fontWeight: '900' }}>
@@ -684,7 +732,7 @@ function StudentView() {
                 <button onClick={() => setTempBid(p => p + 1000)} style={{ flex: 1, padding: '12px 0', fontSize: '1.1rem', fontWeight: 'bold', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white' }}>+ 1000</button>
               </div>
               
-              <button onClick={() => setTempBid(biddingSeat.bid === 900 ? 1000 : biddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
+              <button onClick={() => setTempBid(biddingSeat.bid === 900 && !biddingSeat.realName ? 1000 : biddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
                 금액 다시 입력하기
               </button>
             </div>
