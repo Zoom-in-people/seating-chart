@@ -11,7 +11,7 @@ const adjectives = ['붉은', '푸른', '춤추는', '용감한', '날쌘', '지
 const nouns = ['매', '늑대', '호랑이', '사자', '독수리', '돌고래', '거북이', '고양이', '강아지', '여우'];
 const generateNickname = () => `${adjectives[Math.floor(Math.random() * adjectives.length)]} ${nouns[Math.floor(Math.random() * nouns.length)]}`;
 
-// --- 스마트폰 고유 ID 생성기 (튕김 방지용) ---
+// --- 스마트폰 고유 ID 생성기 ---
 const getDeviceId = () => {
   let id = localStorage.getItem('device_id');
   if (!id) {
@@ -19,6 +19,15 @@ const getDeviceId = () => {
     localStorage.setItem('device_id', id);
   }
   return id;
+};
+
+// --- 타이머 포맷 함수 ---
+const formatTime = (ms) => {
+  if (ms <= 0) return "00:00";
+  const totalSec = Math.floor(ms / 1000);
+  const m = Math.floor(totalSec / 60).toString().padStart(2, '0');
+  const s = (totalSec % 60).toString().padStart(2, '0');
+  return `${m}:${s}`;
 };
 
 // ==========================================
@@ -30,6 +39,8 @@ function TeacherView() {
   const [cols, setCols] = useState(4);
   const [seats, setSeats] = useState([]);
   const [auctionStatus, setAuctionStatus] = useState("waiting");
+  const [endTime, setEndTime] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(0);
 
   const [editingSeat, setEditingSeat] = useState(null);
   const [editBid, setEditBid] = useState(900);
@@ -53,11 +64,13 @@ function TeacherView() {
           setCols(data.config.cols || 4);
         }
         if (data.status) setAuctionStatus(data.status);
+        if (data.endTime) setEndTime(data.endTime);
+        else setEndTime(null);
         
         setSeats(prevSeats => {
           const currentScale = 4 / (data.config?.cols || 4);
           return Array(Number(data.config?.seatCount || 24)).fill(null).map((_, i) => {
-            const fbSeat = data.seats && data.seats[i] ? data.seats[i] : { bid: 900, nickname: '', realName: '' };
+            const fbSeat = data.seats && data.seats[i] ? data.seats[i] : { bid: 900, baseBid: 900, nickname: '', realName: '' };
             const prevSeat = prevSeats.find(s => s.id === i);
             
             return {
@@ -73,6 +86,17 @@ function TeacherView() {
     });
   }, []);
 
+  // 💡 타이머 감소 로직
+  useEffect(() => {
+    if (!endTime || auctionStatus !== 'active') return;
+    const interval = setInterval(() => {
+      const remain = Math.max(0, endTime - Date.now());
+      setTimeLeft(remain);
+      if (remain === 0) clearInterval(interval);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [endTime, auctionStatus]);
+
   const syncConfigToFirebase = (count, columns, input) => {
     update(ref(db, 'config'), { seatCount: Number(count), cols: Number(columns), studentInput: input });
   };
@@ -80,7 +104,6 @@ function TeacherView() {
   const handleStop = (id, e, data) => {
     const snappedX = Math.max(150, Math.round((data.x - 150) / (300 * scale)) * (300 * scale) + 150);
     const snappedY = Math.max(180, Math.round((data.y - 180) / (230 * scale)) * (230 * scale) + 180);
-    
     update(ref(db, `seats/${id}`), { x: snappedX, y: snappedY });
   };
 
@@ -101,25 +124,44 @@ function TeacherView() {
       const updates = {};
       for (let i = 0; i < seatCount; i++) {
         updates[`seats/${i}/bid`] = 900;
+        updates[`seats/${i}/baseBid`] = 900;
         updates[`seats/${i}/nickname`] = '';
         updates[`seats/${i}/realName`] = '';
         updates[`seats/${i}/isFixed`] = null;
       }
       updates['status'] = 'waiting';
-      updates['bidCounts'] = null; // 💡 학생들의 잔여 입찰 횟수 초기화
+      updates['bidCounts'] = null; 
+      updates['endTime'] = null; 
       update(ref(db), updates);
     }
   };
 
   const handleStartAuction = () => {
-    if (window.confirm("현재 설정된 금액과 배치 상태를 유지한 채로 블라인드 경매를 시작합니까?\n\n(학생들의 입찰 횟수가 다시 5회로 초기화됩니다.)")) {
-      update(ref(db), { status: 'active', bidCounts: null });
+    const timeStr = window.prompt("⏱️ 경매 진행 시간을 '분' 단위로 입력하세요.\n(예: 5분 진행 시 숫자 5 입력, 취소 시 경매 시작 안 됨)", "5");
+    if (timeStr === null) return; // 취소 누름
+    
+    const minutes = Number(timeStr);
+    if (isNaN(minutes) || minutes <= 0) return alert("올바른 숫자를 입력해주세요!");
+
+    if (window.confirm(`현재 지정된 자리와 금액을 유지하며 ${minutes}분 동안 경매를 시작합니까?`)) {
+      const updates = {};
+      
+      // 💡 시작할 때 모든 자리의 현재 금액을 최소 금액(baseBid)으로 고정
+      seats.forEach(seat => {
+        updates[`seats/${seat.id}/baseBid`] = seat.bid || 900;
+      });
+      
+      updates['status'] = 'active';
+      updates['bidCounts'] = null; 
+      updates['endTime'] = Date.now() + minutes * 60 * 1000;
+      update(ref(db), updates);
     }
   };
 
   const handleEndAuction = () => {
     if (window.confirm("경매를 종료하고 학생들의 진짜 이름을 공개하시겠습니까?")) {
-      set(ref(db, 'status'), 'ended');
+      const updates = { status: 'ended', endTime: null };
+      update(ref(db), updates);
     }
   };
 
@@ -128,7 +170,7 @@ function TeacherView() {
       const allNames = studentInput.split(/[,\n]+/).map(n => n.trim()).filter(n => n);
       const assignedNames = seats.map(s => s.realName).filter(n => n);
       const unassignedNames = allNames.filter(n => !assignedNames.includes(n));
-      const emptySeats = seats.filter(s => s.bid === 900 || s.realName === "");
+      const emptySeats = seats.filter(s => s.bid === 900 || !s.realName);
 
       if (unassignedNames.length === 0) return alert("배치할 남은 학생이 없습니다!");
       if (emptySeats.length === 0) return alert("남은 빈 자리가 없습니다!");
@@ -163,24 +205,24 @@ function TeacherView() {
 
   const openEditModal = (seat) => {
     setEditingSeat(seat);
-    setEditBid(seat.bid === 900 ? 900 : seat.bid);
+    setEditBid(seat.bid === 900 && !seat.realName ? 900 : seat.bid);
     setEditName(seat.realName || "");
   };
 
   const saveSeatEdit = () => {
     const updates = {};
     updates[`seats/${editingSeat.id}/bid`] = editBid;
+    updates[`seats/${editingSeat.id}/baseBid`] = editBid; // 선생님이 입력한 금액이 곧 최소 기준액
     
     const trimmedName = editName.replace(/\s+/g, '');
     if (trimmedName) {
       updates[`seats/${editingSeat.id}/realName`] = trimmedName;
       updates[`seats/${editingSeat.id}/nickname`] = editingSeat.nickname || generateNickname();
-      updates[`seats/${editingSeat.id}/isFixed`] = true; // 💡 선생님이 지정한 자리는 isFixed 처리
+      updates[`seats/${editingSeat.id}/isFixed`] = true; 
     } else {
       updates[`seats/${editingSeat.id}/realName`] = '';
       updates[`seats/${editingSeat.id}/nickname`] = '';
       updates[`seats/${editingSeat.id}/isFixed`] = null;
-      if(editBid === 900) updates[`seats/${editingSeat.id}/bid`] = 900;
     }
     
     update(ref(db), updates);
@@ -263,7 +305,12 @@ function TeacherView() {
         </div>
 
         <div className="control-group">
-          <label>3. 블라인드 경매 컨트롤</label>
+          <label>
+            3. 블라인드 경매 컨트롤
+            {auctionStatus === 'active' && endTime && (
+              <span style={{ float: 'right', color: '#ef4444', fontWeight: 'bold' }}>남은 시간: {formatTime(timeLeft)}</span>
+            )}
+          </label>
           
           {auctionStatus !== 'active' ? (
             <>
@@ -271,7 +318,7 @@ function TeacherView() {
                 onClick={handleStartAuction} 
                 style={{ width: '100%', padding: '16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.1rem', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)' }}
               >
-                ▶️ 경매 시작 (이전 상태 유지)
+                ▶️ 경매 시작 (+ 타이머)
               </button>
 
               <button 
@@ -325,7 +372,7 @@ function TeacherView() {
             onStop={(e, data) => handleStop(seat.id, e, data)}
             cancel=".cancel-drag"
           >
-            <div ref={seat.nodeRef} className={`desk ${seat.bid !== 900 ? 'active' : ''}`} style={{ width: `${deskWidth}px`, height: `${deskHeight}px`, padding: `${15 * scale}px`, borderRadius: `${20 * scale}px` }}>
+            <div ref={seat.nodeRef} className={`desk ${seat.realName ? 'active' : ''}`} style={{ width: `${deskWidth}px`, height: `${deskHeight}px`, padding: `${15 * scale}px`, borderRadius: `${20 * scale}px` }}>
               <header style={{ fontSize: `${0.8 * scale}rem`, marginBottom: `${8 * scale}px`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span>좌석 #{seat.id + 1}</span>
                 
@@ -340,11 +387,9 @@ function TeacherView() {
                 )}
               </header>
               <div className="details" style={{justifyContent: 'center'}}>
-                {/* 💡 [변경됨] 수동 할당(isFixed)된 자리는 선생님 화면에 실명이 보입니다. */}
                 <div className="name-tag" style={{ fontSize: `${1.8 * scale}rem`, color: auctionStatus === 'ended' ? '#e11d48' : '#1e293b' }}>
                   {!seat.realName ? "빈 자리" : (seat.isFixed || auctionStatus === 'ended' ? seat.realName : seat.nickname)}
                 </div>
-                {/* 💡 [변경됨] 빈자리여도 선생님이 지정한 포인트가 있으면 900P 대신 해당 포인트 노출 */}
                 <div className="score-box" style={{ fontSize: `${1.1 * scale}rem`, width: '100%', marginTop: `${15 * scale}px` }}>
                   {seat.bid === 0 ? "랜덤 배치" : `${seat.bid} P`}
                 </div>
@@ -361,7 +406,6 @@ function TeacherView() {
             
             <div style={{ margin: '20px 0', textAlign: 'left' }}>
               <label style={{ display: 'block', marginBottom: '8px', fontWeight: 'bold', color: '#475569' }}>지정할 학생 선택</label>
-              {/* 💡 [변경됨] 입력창 대신 명단 드롭다운(select) 적용 */}
               <select 
                 value={editName} 
                 onChange={(e) => setEditName(e.target.value)}
@@ -396,7 +440,7 @@ function TeacherView() {
 }
 
 // ==========================================
-// 2. 학생용 스마트폰 화면 (+ 잔여 입찰 횟수 5회 제한 적용)
+// 2. 학생용 스마트폰 화면
 // ==========================================
 function StudentView() {
   const [realName, setRealName] = useState("");
@@ -404,19 +448,22 @@ function StudentView() {
   const [isJoined, setIsJoined] = useState(false);
   const [isJoining, setIsJoining] = useState(false);
   
+  // 💡 [새로 추가됨] 입장 규칙 안내 팝업 상태
+  const [showWelcome, setShowWelcome] = useState(false);
+  
   const [seats, setSeats] = useState([]);
   const [cols, setCols] = useState(4);
   const [auctionStatus, setAuctionStatus] = useState("waiting");
   
+  const [endTime, setEndTime] = useState(null);
+  const [timeLeft, setTimeLeft] = useState(0);
+
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
-  
-  // 💡 [새로 추가됨] 본인의 입찰 횟수 저장 상태 (최대 5회)
   const [bidCount, setBidCount] = useState(0);
 
   const deviceId = useRef(getDeviceId());
-
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
 
   const fetchMyPoints = async (name) => {
@@ -447,7 +494,6 @@ function StudentView() {
     }
   };
 
-  // 💡 실시간 입찰 횟수(bidCounts) 연동
   useEffect(() => {
     if (realName && isJoined) {
       const bidRef = ref(db, `bidCounts/${realName}`);
@@ -479,14 +525,26 @@ function StudentView() {
       if (data) {
         if (data.config) setCols(data.config.cols || 4);
         if (data.status) setAuctionStatus(data.status);
+        if (data.endTime) setEndTime(data.endTime);
+        else setEndTime(null);
         if (data.seats) {
           const seatsArr = Object.keys(data.seats).map(key => ({ id: Number(key), ...data.seats[key] }));
           setSeats(seatsArr);
         }
       }
     });
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // 💡 타이머 감소 로직
+  useEffect(() => {
+    if (!endTime || auctionStatus !== 'active') return;
+    const interval = setInterval(() => {
+      const remain = Math.max(0, endTime - Date.now());
+      setTimeLeft(remain);
+      if (remain === 0) clearInterval(interval);
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [endTime, auctionStatus]);
 
   const handleJoin = async () => {
     const normalizedName = realName.replace(/\s+/g, '');
@@ -524,7 +582,7 @@ function StudentView() {
     localStorage.setItem('student_nickname', newNick);
     
     setIsJoining(false);
-    alert(`환영합니다! 당신의 암호명은 [${newNick}] 입니다.`);
+    setShowWelcome(true); // 💡 입장 시 환영 안내 팝업 띄우기
   };
 
   const handleLogout = async () => {
@@ -545,22 +603,21 @@ function StudentView() {
 
   const openBidModal = (seat) => {
     if (auctionStatus !== 'active') return alert("현재 경매 진행 중이 아닙니다.");
+    if (endTime && timeLeft === 0) return alert("경매 시간이 모두 종료되었습니다!");
     if (seat.bid === 0) return alert("선생님께서 랜덤으로 배치 완료한 자리는 빼앗을 수 없습니다!");
     
     setBiddingSeat(seat);
-    // 이월된 포인트 방어 시 무조건 현재 포인트의 +100부터 시작되도록 보정
-    setTempBid(seat.bid === 900 && !seat.realName ? 1000 : seat.bid + 100);
+    // 💡 빈 자리여도 최소 금액(baseBid)을 기준으로 모달 시작액을 제안합니다.
+    setTempBid(!seat.realName && seat.bid === 900 ? 1000 : seat.bid + 100);
   };
 
   const confirmBid = () => {
     if (tempBid <= biddingSeat.bid && (biddingSeat.bid !== 900 || biddingSeat.realName)) {
-      return alert("현재 자리의 포인트보다 무조건 더 높은 금액을 제시해야 합니다!");
+      return alert("현재 자리의 입찰 포인트보다 무조건 더 높은 금액을 제시해야 합니다!");
     }
     if (tempBid > myPoints) {
       return alert(`보유 포인트가 부족합니다! (현재 잔여: ${myPoints}P)`);
     }
-    
-    // 💡 [핵심] 입찰 횟수 검사
     if (bidCount >= 5) {
       return alert("🚫 입찰 잔여 횟수(5회)를 모두 소진하였습니다!\n더 이상 다른 자리에 입찰할 수 없습니다.");
     }
@@ -568,19 +625,20 @@ function StudentView() {
     const updates = {};
     seats.forEach(seat => {
       if (seat.realName === realName && seat.id !== biddingSeat.id) {
-        updates[`seats/${seat.id}/bid`] = 900;
+        // 💡 다른 자리로 이동하면 기존 자리는 선생님의 최초 설정액(baseBid)으로 되돌아갑니다.
+        const base = seat.baseBid || 900;
+        updates[`seats/${seat.id}/bid`] = base;
         updates[`seats/${seat.id}/nickname`] = '';
         updates[`seats/${seat.id}/realName`] = '';
-        updates[`seats/${seat.id}/isFixed`] = null; // 학생이 이동하면 지정석 해제
+        updates[`seats/${seat.id}/isFixed`] = null; 
       }
     });
 
     updates[`seats/${biddingSeat.id}/bid`] = tempBid;
     updates[`seats/${biddingSeat.id}/nickname`] = nickname;
     updates[`seats/${biddingSeat.id}/realName`] = realName;
-    updates[`seats/${biddingSeat.id}/isFixed`] = null; // 학생이 덮어쓰면 지정석 속성 제거
+    updates[`seats/${biddingSeat.id}/isFixed`] = null; 
 
-    // 💡 [핵심] 입찰할 때마다 횟수 1 차감 (Firebase에는 쓴 횟수 +1로 기록)
     updates[`bidCounts/${realName}`] = bidCount + 1;
 
     update(ref(db), updates);
@@ -588,10 +646,10 @@ function StudentView() {
   };
 
   const handleCancelBid = () => {
-    // 취소해도 입찰 횟수는 복구되지 않음을 경고
     if (window.confirm("정말 이 자리의 입찰을 취소하시겠습니까?\n\n⚠️ 주의: 취소해도 차감된 '입찰 잔여 횟수'는 복구되지 않습니다!")) {
       const updates = {};
-      updates[`seats/${biddingSeat.id}/bid`] = 900;
+      const base = biddingSeat.baseBid || 900;
+      updates[`seats/${biddingSeat.id}/bid`] = base;
       updates[`seats/${biddingSeat.id}/nickname`] = '';
       updates[`seats/${biddingSeat.id}/realName`] = '';
       updates[`seats/${biddingSeat.id}/isFixed`] = null;
@@ -646,14 +704,15 @@ function StudentView() {
           <div style={{ fontSize: '0.85rem', color: '#fbbf24' }}>💰 잔여 포인트: {myPoints.toLocaleString()}P</div>
         </div>
         
-        {/* 💡 [추가됨] 상단 잔여 입찰 횟수 및 뱃지 영역 */}
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
             <div style={{ background: '#3b82f6', color: 'white', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
               잔여 입찰: {Math.max(0, 5 - bidCount)}회
             </div>
-            <div className="status-badge" style={{ background: auctionStatus === 'active' ? '#ef4444' : '#f59e0b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
-              {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
+            
+            {/* 💡 타이머 표시 뱃지 */}
+            <div className="status-badge" style={{ background: auctionStatus === 'active' ? (timeLeft === 0 ? '#94a3b8' : '#ef4444') : '#f59e0b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+              {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? (endTime ? `⏱️ ${formatTime(timeLeft)}` : '🔥 진행중') : '🛑 종료됨'}
             </div>
           </div>
           <button onClick={handleLogout} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #94a3b8', borderRadius: '6px', fontSize: '0.75rem', padding: '4px 8px', cursor: 'pointer' }}>
@@ -689,11 +748,12 @@ function StudentView() {
                 #{seat.id + 1}
               </div>
               
+              {/* 💡 [변경됨] 주인이 없으면 무조건 '입찰가능' 표시 */}
               <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
-                 {seat.bid === 900 && !seat.realName 
+                 {!seat.realName 
                    ? "입찰가능" 
                    : (auctionStatus === 'ended' || seat.isFixed 
-                       ? seat.realName // 종료되었거나 선생님이 수동 지정한 자리는 진짜 이름 노출
+                       ? seat.realName 
                        : (seat.realName === realName 
                            ? <>{seat.nickname}<br/><span style={{fontSize: '0.8em', color: '#4f46e5'}}>({realName})</span></> 
                            : seat.nickname)
@@ -701,13 +761,38 @@ function StudentView() {
                  }
               </div>
               
+              {/* 💡 [변경됨] 선생님이 빈자리에 포인트를 올렸으면 그 포인트가 보임 */}
               <div style={{ fontSize: `${1.0 * fontScale}rem`, fontWeight: '800', color: '#ef4444' }}>
-                {seat.bid === 900 && !seat.realName ? "900P" : (seat.bid === 0 ? "랜덤" : seat.bid + "P")}
+                {!seat.realName ? `${seat.bid}P` : (seat.bid === 0 ? "랜덤" : seat.bid + "P")}
               </div>
             </div>
           ))}
         </div>
       </div>
+
+      {/* 💡 [새로 추가됨] 입장 규칙 안내 팝업 모달 */}
+      {showWelcome && (
+        <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.8)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 999 }}>
+          <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '400px', padding: '2rem', borderRadius: '16px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
+            <h2 style={{ marginTop: 0, color: '#1e293b', fontSize: '1.5rem' }}>📢 경매장 입장 안내</h2>
+            
+            <ol style={{ textAlign: 'left', lineHeight: '1.6', color: '#334155', paddingLeft: '20px', marginBottom: '25px', fontSize: '0.95rem' }}>
+              <li style={{ marginBottom: '10px' }}>좌측 상단의 별명 옆에 <strong>자신의 이름이 정확히 뜨는지</strong> 확인하세요.</li>
+              <li style={{ marginBottom: '10px' }}>경매 입찰 가능 횟수는 <strong style={{ color: '#ef4444', fontSize: '1.2em' }}>'5회'</strong>입니다. 이 외에 참가는 불가합니다. (취소해도 횟수 차감)</li>
+              <li style={{ marginBottom: '10px' }}>경매 <strong>가능 시간(타이머)</strong>을 보시고 주의해서 진행하세요.</li>
+              <li style={{ marginBottom: '10px' }}>이번에 입찰한 자리의 금액이 <strong>다음 입찰의 최소 금액</strong>이 됩니다.</li>
+              <li>주인이 정해지지 않은 자리는 다음에 지정된 <strong>최소 금액(기본 1000P)</strong>부터 시작됩니다.</li>
+            </ol>
+            
+            <button 
+              onClick={() => setShowWelcome(false)} 
+              style={{ width: '100%', padding: '14px', borderRadius: '12px', border: 'none', background: '#4f46e5', color: 'white', cursor: 'pointer', fontWeight: '900', fontSize: '1.1rem' }}
+            >
+              네, 확인했습니다!
+            </button>
+          </div>
+        </div>
+      )}
 
       {biddingSeat && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
@@ -716,7 +801,6 @@ function StudentView() {
             <p style={{fontSize: '0.85rem', color: '#64748b', marginTop: '5px'}}>다른 자리를 선택하면 기존 입찰은 취소됩니다.</p>
             
             <div className="bid-section" style={{ padding: '1rem', marginTop: '10px', background: '#f8fafc', borderRadius: '12px' }}>
-              {/* 💡 잔여 횟수 경고 문구 추가 */}
               <span className="bid-label" style={{ display: 'block', marginBottom: '10px', color: '#ef4444', fontWeight: 'bold' }}>
                 ⚠️ 신중하게 입찰하세요! (남은 입찰: {Math.max(0, 5 - bidCount)}회)
               </span>
@@ -732,7 +816,7 @@ function StudentView() {
                 <button onClick={() => setTempBid(p => p + 1000)} style={{ flex: 1, padding: '12px 0', fontSize: '1.1rem', fontWeight: 'bold', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white' }}>+ 1000</button>
               </div>
               
-              <button onClick={() => setTempBid(biddingSeat.bid === 900 && !biddingSeat.realName ? 1000 : biddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
+              <button onClick={() => setTempBid(!biddingSeat.realName && biddingSeat.bid === 900 ? 1000 : biddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
                 금액 다시 입력하기
               </button>
             </div>
