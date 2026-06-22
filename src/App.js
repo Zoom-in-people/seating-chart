@@ -28,8 +28,13 @@ const formatTime = (ms) => {
   return `${m}:${s}`;
 };
 
+// 한 좌석당 최대 입찰 가능 횟수
+const MAX_BIDS_PER_SEAT = 5;
+// 마감 임박(5초 이하) 시 입찰하면 연장되는 시간
+const ANTI_SNIPE_MS = 5000;
+
 // ==========================================
-// 1. 선생님용 메인 화면 (+ 예쁜 타이머 UI 적용)
+// 1. 선생님용 메인 화면
 // ==========================================
 function TeacherView() {
   const [studentInput, setStudentInput] = useState("");
@@ -37,17 +42,19 @@ function TeacherView() {
   const [cols, setCols] = useState(4);
   const [seats, setSeats] = useState([]);
   const [auctionStatus, setAuctionStatus] = useState("waiting");
-  const [endTime, setEndTime] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(0);
 
   const [editingSeat, setEditingSeat] = useState(null);
   const [editBid, setEditBid] = useState(900);
   const [editName, setEditName] = useState("");
 
-  // 💡 [새로 추가됨] 타이머 설정 모달 관련 상태
   const [showTimerModal, setShowTimerModal] = useState(false);
   const [timerMin, setTimerMin] = useState(5);
   const [timerSec, setTimerSec] = useState(0);
+
+  // 좌석별 타이머 표시/잠금 처리를 위한 now 틱
+  const [nowTick, setNowTick] = useState(Date.now());
+  const seatsRef = useRef(seats);
+  const statusRef = useRef(auctionStatus);
 
   const canvasRef = useRef(null);
   const teacherRef = useRef(null);
@@ -55,6 +62,9 @@ function TeacherView() {
   const scale = Math.min(1.2, 4 / (cols || 1)); 
   const deskWidth = 220 * scale;
   const deskHeight = 150 * scale;
+
+  useEffect(() => { seatsRef.current = seats; }, [seats]);
+  useEffect(() => { statusRef.current = auctionStatus; }, [auctionStatus]);
 
   useEffect(() => {
     const dbRef = ref(db, '/');
@@ -67,9 +77,7 @@ function TeacherView() {
           setCols(data.config.cols || 4);
         }
         if (data.status) setAuctionStatus(data.status);
-        if (data.endTime) setEndTime(data.endTime);
-        else setEndTime(null);
-        
+
         setSeats(prevSeats => {
           const currentScale = 4 / (data.config?.cols || 4);
           return Array(Number(data.config?.seatCount || 24)).fill(null).map((_, i) => {
@@ -89,15 +97,20 @@ function TeacherView() {
     });
   }, []);
 
+  // 1초마다 화면 갱신 + 마감된 좌석 잠금 처리
   useEffect(() => {
-    if (!endTime || auctionStatus !== 'active') return;
-    const interval = setInterval(() => {
-      const remain = Math.max(0, endTime - Date.now());
-      setTimeLeft(remain);
-      if (remain === 0) clearInterval(interval);
+    const t = setInterval(() => {
+      setNowTick(Date.now());
+      if (statusRef.current === 'active') {
+        seatsRef.current.forEach(seat => {
+          if (seat.endTime && !seat.locked && seat.endTime - Date.now() <= 0) {
+            set(ref(db, `seats/${seat.id}/locked`), true);
+          }
+        });
+      }
     }, 1000);
-    return () => clearInterval(interval);
-  }, [endTime, auctionStatus]);
+    return () => clearInterval(t);
+  }, []);
 
   const syncConfigToFirebase = (count, columns, input) => {
     update(ref(db, 'config'), { seatCount: Number(count), cols: Number(columns), studentInput: input });
@@ -130,20 +143,34 @@ function TeacherView() {
         updates[`seats/${i}/nickname`] = '';
         updates[`seats/${i}/realName`] = '';
         updates[`seats/${i}/isFixed`] = null;
+        updates[`seats/${i}/endTime`] = null;
+        updates[`seats/${i}/locked`] = null;
       }
       updates['status'] = 'waiting';
       updates['bidCounts'] = null; 
-      updates['endTime'] = null; 
       update(ref(db), updates);
     }
   };
 
-  // 💡 [수정됨] 경매 시작 확인 모달 띄우기 함수
+  // 💡 [신규] 좌석 인원 초기화: 포인트는 유지, 배정된 이름만 빈 자리로
+  const handleResetSeatNames = () => {
+    if (window.confirm("모든 좌석의 '배정된 이름'만 초기화하시겠습니까?\n\n✅ 좌석별 포인트(P)는 그대로 유지됩니다.\n❌ 배정된 학생 이름/별명만 지워지고 '빈 자리(지정 안함)' 상태가 됩니다.")) {
+      const updates = {};
+      for (let i = 0; i < seatCount; i++) {
+        updates[`seats/${i}/nickname`] = '';
+        updates[`seats/${i}/realName`] = '';
+        updates[`seats/${i}/isFixed`] = null;
+      }
+      update(ref(db), updates);
+      alert("모든 좌석의 이름이 초기화되었습니다. (포인트는 유지됨)");
+    }
+  };
+
   const handleOpenTimerModal = () => {
     setShowTimerModal(true);
   };
 
-  // 💡 [새로 추가됨] 예쁜 팝업창에서 시간을 설정하고 경매를 확정하는 함수
+  // 💡 [수정] 경매 시작: 글로벌 타이머 대신 "좌석별" 타이머를 동일 시각으로 세팅
   const confirmStartAuction = () => {
     const min = Number(timerMin) || 0;
     const sec = Number(timerSec) || 0;
@@ -151,25 +178,30 @@ function TeacherView() {
 
     if (totalMs <= 0) return alert("경매 시간을 1초 이상으로 설정해주세요!");
 
-    if (window.confirm(`현재 지정된 자리와 금액을 유지하며 ${min}분 ${sec}초 동안 경매를 시작합니까?`)) {
+    if (window.confirm(`현재 지정된 자리와 금액을 유지하며 ${min}분 ${sec}초 동안 경매를 시작합니까?\n(각 좌석은 독립적으로 타이머가 흐르며, 마감 5초 전 입찰 시 해당 좌석만 5초 연장됩니다.)`)) {
       const updates = {};
-      
+      const seatEndTime = Date.now() + totalMs;
+
       seats.forEach(seat => {
         updates[`seats/${seat.id}/baseBid`] = seat.bid || 900;
+        updates[`seats/${seat.id}/endTime`] = seatEndTime;
+        updates[`seats/${seat.id}/locked`] = false;
       });
       
       updates['status'] = 'active';
       updates['bidCounts'] = null; 
-      updates['endTime'] = Date.now() + totalMs;
       update(ref(db), updates);
       
-      setShowTimerModal(false); // 팝업 닫기
+      setShowTimerModal(false);
     }
   };
 
   const handleEndAuction = () => {
     if (window.confirm("경매를 종료하고 학생들의 진짜 이름을 공개하시겠습니까?")) {
-      const updates = { status: 'ended', endTime: null };
+      const updates = { status: 'ended' };
+      seats.forEach(seat => {
+        updates[`seats/${seat.id}/locked`] = true;
+      });
       update(ref(db), updates);
     }
   };
@@ -314,16 +346,10 @@ function TeacherView() {
         </div>
 
         <div className="control-group">
-          <label>
-            3. 블라인드 경매 컨트롤
-            {auctionStatus === 'active' && endTime && (
-              <span style={{ float: 'right', color: '#ef4444', fontWeight: 'bold' }}>남은 시간: {formatTime(timeLeft)}</span>
-            )}
-          </label>
+          <label>3. 블라인드 경매 컨트롤</label>
           
           {auctionStatus !== 'active' ? (
             <>
-              {/* 💡 경매 시작 버튼 누르면 예쁜 모달창이 뜨게 연결 */}
               <button 
                 onClick={handleOpenTimerModal} 
                 style={{ width: '100%', padding: '16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.1rem', fontWeight: '800', cursor: 'pointer', boxShadow: '0 4px 12px rgba(239, 68, 68, 0.3)' }}
@@ -341,6 +367,14 @@ function TeacherView() {
           ) : (
             <button className="btn-auction-end" onClick={handleEndAuction}>🛑 경매 종료 및 정체 공개!</button>
           )}
+
+          {/* 💡 [신규] 좌석 인원 초기화 버튼 */}
+          <button 
+            onClick={handleResetSeatNames}
+            style={{ width: '100%', padding: '14px', background: '#fff7ed', color: '#c2410c', border: '2px solid #fb923c', borderRadius: '12px', fontSize: '1rem', fontWeight: '800', cursor: 'pointer', marginTop: '10px' }}
+          >
+            🧹 좌석 인원 초기화 (포인트는 유지)
+          </button>
           
           <button 
             onClick={handleRandomAssign} 
@@ -357,6 +391,7 @@ function TeacherView() {
           </button>
           
           <p className="hint" style={{marginTop:'10px'}}>* 접속 주소: 웹주소/student</p>
+          <p className="hint" style={{marginTop:'4px', fontSize:'0.8rem', color:'#94a3b8'}}>* 좌석당 입찰 최대 {MAX_BIDS_PER_SEAT}회 / 마감 5초 전 입찰 시 해당 좌석 5초 연장</p>
         </div>
 
         <footer className="footer-actions" style={{ marginTop: 'auto' }}>
@@ -374,47 +409,56 @@ function TeacherView() {
           <div ref={teacherRef} className="object teacher-desk">교 탁</div>
         </Draggable>
 
-        {seats.map((seat) => (
-          <Draggable 
-            key={seat.id} 
-            nodeRef={seat.nodeRef} 
-            position={{x: seat.x, y: seat.y}}
-            onStop={(e, data) => handleStop(seat.id, e, data)}
-            cancel=".cancel-drag"
-          >
-            <div ref={seat.nodeRef} className={`desk ${seat.realName ? 'active' : ''}`} style={{ width: `${deskWidth}px`, height: `${deskHeight}px`, padding: `${15 * scale}px`, borderRadius: `${20 * scale}px` }}>
-              <header style={{ fontSize: `${0.8 * scale}rem`, marginBottom: `${8 * scale}px`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-                <span>좌석 #{seat.id + 1}</span>
-                
-                {auctionStatus !== 'active' && (
-                  <button 
-                    className="cancel-drag"
-                    onClick={(e) => { e.stopPropagation(); openEditModal(seat); }}
-                    style={{ background: '#e2e8f0', border: 'none', borderRadius: '4px', fontSize: `${0.7 * scale}rem`, padding: '3px 6px', cursor: 'pointer', color: '#475569', fontWeight: 'bold' }}
-                  >
-                    ⚙️ 설정
-                  </button>
-                )}
-              </header>
-              <div className="details" style={{justifyContent: 'center'}}>
-                <div className="name-tag" style={{ fontSize: `${1.8 * scale}rem`, color: auctionStatus === 'ended' ? '#e11d48' : '#1e293b' }}>
-                  {!seat.realName ? "빈 자리" : (seat.isFixed || auctionStatus === 'ended' ? seat.realName : seat.nickname)}
-                </div>
-                <div className="score-box" style={{ fontSize: `${1.1 * scale}rem`, width: '100%', marginTop: `${15 * scale}px` }}>
-                  {seat.bid === 0 ? "랜덤 배치" : `${seat.bid} P`}
+        {seats.map((seat) => {
+          const remain = seat.endTime ? Math.max(0, seat.endTime - nowTick) : null;
+          const isLocked = !!seat.locked || (remain !== null && remain <= 0);
+          return (
+            <Draggable 
+              key={seat.id} 
+              nodeRef={seat.nodeRef} 
+              position={{x: seat.x, y: seat.y}}
+              onStop={(e, data) => handleStop(seat.id, e, data)}
+              cancel=".cancel-drag"
+            >
+              <div ref={seat.nodeRef} className={`desk ${seat.realName ? 'active' : ''}`} style={{ width: `${deskWidth}px`, height: `${deskHeight}px`, padding: `${15 * scale}px`, borderRadius: `${20 * scale}px` }}>
+                <header style={{ fontSize: `${0.8 * scale}rem`, marginBottom: `${8 * scale}px`, display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                  <span>좌석 #{seat.id + 1}</span>
+
+                  {auctionStatus === 'active' && seat.endTime ? (
+                    <span style={{ fontWeight: 800, color: isLocked ? '#16a34a' : (remain <= ANTI_SNIPE_MS ? '#ef4444' : '#64748b') }}>
+                      {isLocked ? '🔒 마감' : formatTime(remain)}
+                    </span>
+                  ) : (
+                    auctionStatus !== 'active' && (
+                      <button 
+                        className="cancel-drag"
+                        onClick={(e) => { e.stopPropagation(); openEditModal(seat); }}
+                        style={{ background: '#e2e8f0', border: 'none', borderRadius: '4px', fontSize: `${0.7 * scale}rem`, padding: '3px 6px', cursor: 'pointer', color: '#475569', fontWeight: 'bold' }}
+                      >
+                        ⚙️ 설정
+                      </button>
+                    )
+                  )}
+                </header>
+                <div className="details" style={{justifyContent: 'center'}}>
+                  <div className="name-tag" style={{ fontSize: `${1.8 * scale}rem`, color: auctionStatus === 'ended' ? '#e11d48' : '#1e293b' }}>
+                    {!seat.realName ? "빈 자리" : (seat.isFixed || auctionStatus === 'ended' ? seat.realName : seat.nickname)}
+                  </div>
+                  <div className="score-box" style={{ fontSize: `${1.1 * scale}rem`, width: '100%', marginTop: `${15 * scale}px` }}>
+                    {seat.bid === 0 ? "랜덤 배치" : `${seat.bid} P`}
+                  </div>
                 </div>
               </div>
-            </div>
-          </Draggable>
-        ))}
+            </Draggable>
+          );
+        })}
       </main>
 
-      {/* 💡 [새로 추가됨] 예쁜 타이머 설정 팝업 모달 */}
       {showTimerModal && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '350px', padding: '2rem', borderRadius: '16px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
             <h2 style={{ marginTop: 0, color: '#1e293b' }}>⏱️ 경매 타이머 설정</h2>
-            <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '20px' }}>경매 진행 시간을 설정해 주세요.</p>
+            <p style={{ color: '#64748b', fontSize: '0.9rem', marginBottom: '20px' }}>경매 진행 시간을 설정해 주세요. (각 좌석에 동일하게 적용되며, 이후 좌석별로 독립적으로 흐릅니다)</p>
             
             <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '15px', marginBottom: '20px' }}>
               <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
@@ -448,7 +492,6 @@ function TeacherView() {
         </div>
       )}
 
-      {/* 좌석 수동 설정 모달창 (기존 유지) */}
       {editingSeat && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 1000 }}>
           <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '350px', padding: '2rem', borderRadius: '16px', textAlign: 'center', boxShadow: '0 10px 25px rgba(0,0,0,0.2)' }}>
@@ -503,14 +546,18 @@ function StudentView() {
   const [seats, setSeats] = useState([]);
   const [cols, setCols] = useState(4);
   const [auctionStatus, setAuctionStatus] = useState("waiting");
-  
-  const [endTime, setEndTime] = useState(null);
-  const [timeLeft, setTimeLeft] = useState(0);
 
   const [biddingSeat, setBiddingSeat] = useState(null);
   const [tempBid, setTempBid] = useState(0);
   const [myPoints, setMyPoints] = useState(0);
-  const [bidCount, setBidCount] = useState(0);
+
+  // 좌석별 입찰 횟수: { [seatId]: count }
+  const [seatBidCounts, setSeatBidCounts] = useState({});
+
+  // 좌석 타이머 표시/잠금 처리를 위한 now 틱
+  const [nowTick, setNowTick] = useState(Date.now());
+  const seatsRef = useRef(seats);
+  const statusRef = useRef(auctionStatus);
 
   const deviceId = useRef(getDeviceId());
   const GAS_URL = "https://script.google.com/macros/s/AKfycbxwC4npay5vdEkSGWXHf744a0h9JPR4HYaX6EgJRDZjVhgmsPMFA-ysOuo1dxv_GKgwog/exec?type=status";
@@ -543,11 +590,15 @@ function StudentView() {
     }
   };
 
+  useEffect(() => { seatsRef.current = seats; }, [seats]);
+  useEffect(() => { statusRef.current = auctionStatus; }, [auctionStatus]);
+
+  // 좌석별 입찰 횟수 구독
   useEffect(() => {
     if (realName && isJoined) {
       const bidRef = ref(db, `bidCounts/${realName}`);
       const unsubscribe = onValue(bidRef, (snap) => {
-        setBidCount(snap.val() || 0);
+        setSeatBidCounts(snap.val() || {});
       });
       return () => unsubscribe();
     }
@@ -574,8 +625,6 @@ function StudentView() {
       if (data) {
         if (data.config) setCols(data.config.cols || 4);
         if (data.status) setAuctionStatus(data.status);
-        if (data.endTime) setEndTime(data.endTime);
-        else setEndTime(null);
         if (data.seats) {
           const seatsArr = Object.keys(data.seats).map(key => ({ id: Number(key), ...data.seats[key] }));
           setSeats(seatsArr);
@@ -584,15 +633,20 @@ function StudentView() {
     });
   }, []);
 
+  // 1초마다 화면 갱신 + 마감된 좌석 잠금 처리
   useEffect(() => {
-    if (!endTime || auctionStatus !== 'active') return;
-    const interval = setInterval(() => {
-      const remain = Math.max(0, endTime - Date.now());
-      setTimeLeft(remain);
-      if (remain === 0) clearInterval(interval);
+    const t = setInterval(() => {
+      setNowTick(Date.now());
+      if (statusRef.current === 'active') {
+        seatsRef.current.forEach(seat => {
+          if (seat.endTime && !seat.locked && seat.endTime - Date.now() <= 0) {
+            set(ref(db, `seats/${seat.id}/locked`), true);
+          }
+        });
+      }
     }, 1000);
-    return () => clearInterval(interval);
-  }, [endTime, auctionStatus]);
+    return () => clearInterval(t);
+  }, []);
 
   const handleJoin = async () => {
     const normalizedName = realName.replace(/\s+/g, '');
@@ -649,30 +703,53 @@ function StudentView() {
     }
   };
 
+  // 현재 좌석의 남은 시간(ms) 계산. 타이머가 없으면 null(제한 없음)
+  const getRemain = (seat) => seat.endTime ? Math.max(0, seat.endTime - Date.now()) : null;
+  const isSeatLocked = (seat) => {
+    const remain = getRemain(seat);
+    return !!seat.locked || (remain !== null && remain <= 0);
+  };
+
   const openBidModal = (seat) => {
     if (auctionStatus !== 'active') return alert("현재 경매 진행 중이 아닙니다.");
-    if (endTime && timeLeft === 0) return alert("경매 시간이 모두 종료되었습니다!");
+    if (isSeatLocked(seat)) return alert("⏰ 이 자리는 경매 시간이 마감되어 더 이상 입찰할 수 없습니다.");
     if (seat.bid === 0) return alert("선생님께서 랜덤으로 배치 완료한 자리는 빼앗을 수 없습니다!");
+
+    const usedCount = seatBidCounts[seat.id] || 0;
+    if (usedCount >= MAX_BIDS_PER_SEAT) {
+      return alert(`🚫 이 좌석에 입찰 가능한 횟수(${MAX_BIDS_PER_SEAT}회)를 모두 사용하였습니다!\n다른 좌석에는 입찰하실 수 있습니다.`);
+    }
     
     setBiddingSeat(seat);
     setTempBid(!seat.realName && seat.bid === (seat.baseBid || 900) ? (seat.baseBid || 900) + 100 : seat.bid + 100);
   };
 
   const confirmBid = () => {
-    const base = biddingSeat.baseBid || 900;
-    if (tempBid <= biddingSeat.bid && (biddingSeat.bid !== base || biddingSeat.realName)) {
+    // 최신 좌석 정보로 재검증 (모달 떠 있는 동안 상황이 바뀌었을 수 있음)
+    const liveSeat = seats.find(s => s.id === biddingSeat.id) || biddingSeat;
+
+    if (isSeatLocked(liveSeat)) {
+      setBiddingSeat(null);
+      return alert("⏰ 이 자리는 경매 시간이 마감되어 더 이상 입찰할 수 없습니다.");
+    }
+
+    const usedCount = seatBidCounts[liveSeat.id] || 0;
+    if (usedCount >= MAX_BIDS_PER_SEAT) {
+      setBiddingSeat(null);
+      return alert(`🚫 이 좌석에 입찰 가능한 횟수(${MAX_BIDS_PER_SEAT}회)를 모두 사용하였습니다!`);
+    }
+
+    const base = liveSeat.baseBid || 900;
+    if (tempBid <= liveSeat.bid && (liveSeat.bid !== base || liveSeat.realName)) {
       return alert("현재 자리의 입찰 포인트보다 무조건 더 높은 금액을 제시해야 합니다!");
     }
     if (tempBid > myPoints) {
       return alert(`보유 포인트가 부족합니다! (현재 잔여: ${myPoints}P)`);
     }
-    if (bidCount >= 5) {
-      return alert("🚫 입찰 잔여 횟수(5회)를 모두 소진하였습니다!\n더 이상 다른 자리에 입찰할 수 없습니다.");
-    }
 
     const updates = {};
     seats.forEach(seat => {
-      if (seat.realName === realName && seat.id !== biddingSeat.id) {
+      if (seat.realName === realName && seat.id !== liveSeat.id) {
         const oldBase = seat.baseBid || 900;
         updates[`seats/${seat.id}/bid`] = oldBase;
         updates[`seats/${seat.id}/nickname`] = '';
@@ -681,12 +758,19 @@ function StudentView() {
       }
     });
 
-    updates[`seats/${biddingSeat.id}/bid`] = tempBid;
-    updates[`seats/${biddingSeat.id}/nickname`] = nickname;
-    updates[`seats/${biddingSeat.id}/realName`] = realName;
-    updates[`seats/${biddingSeat.id}/isFixed`] = null; 
+    updates[`seats/${liveSeat.id}/bid`] = tempBid;
+    updates[`seats/${liveSeat.id}/nickname`] = nickname;
+    updates[`seats/${liveSeat.id}/realName`] = realName;
+    updates[`seats/${liveSeat.id}/isFixed`] = null; 
 
-    updates[`bidCounts/${realName}`] = bidCount + 1;
+    // 💡 [신규] 마감 5초 이하 남았을 때 입찰 -> 해당 좌석만 5초로 재연장 (Anti-snipe)
+    const remain = getRemain(liveSeat);
+    if (remain !== null && remain <= ANTI_SNIPE_MS) {
+      updates[`seats/${liveSeat.id}/endTime`] = Date.now() + ANTI_SNIPE_MS;
+    }
+
+    // 💡 [신규] 좌석별 입찰 횟수 +1
+    updates[`bidCounts/${realName}/${liveSeat.id}`] = usedCount + 1;
 
     update(ref(db), updates);
     setBiddingSeat(null); 
@@ -743,6 +827,9 @@ function StudentView() {
   const maxCol = Math.max(...gridSeats.map(s => s.c), teacherCols, 1);
   const fontScale = Math.min(1, 4 / maxCol);
 
+  const liveBiddingSeat = biddingSeat ? (seats.find(s => s.id === biddingSeat.id) || biddingSeat) : null;
+  const liveBiddingUsedCount = liveBiddingSeat ? (seatBidCounts[liveBiddingSeat.id] || 0) : 0;
+
   return (
     <div className="student-app" style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#f8fafc' }}>
       <div className="student-header" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '12px 15px', flexShrink: 0, background: '#1e293b', color: 'white' }}>
@@ -753,11 +840,11 @@ function StudentView() {
         
         <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '6px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <div style={{ background: '#3b82f6', color: 'white', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
-              잔여 입찰: {Math.max(0, 5 - bidCount)}회
+            <div style={{ background: '#3b82f6', color: 'white', padding: '4px 8px', borderRadius: '12px', fontSize: '0.75rem', fontWeight: 'bold' }}>
+              좌석당 최대 {MAX_BIDS_PER_SEAT}회 입찰
             </div>
-            <div className="status-badge" style={{ background: auctionStatus === 'active' ? (timeLeft === 0 ? '#94a3b8' : '#ef4444') : '#f59e0b', padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
-              {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? (endTime ? `⏱️ ${formatTime(timeLeft)}` : '🔥 진행중') : '🛑 종료됨'}
+            <div className="status-badge" style={{ background: auctionStatus === 'active' ? '#ef4444' : (auctionStatus === 'ended' ? '#10b981' : '#f59e0b'), padding: '4px 8px', borderRadius: '12px', fontSize: '0.8rem', fontWeight: 'bold' }}>
+              {auctionStatus === 'waiting' ? '대기중' : auctionStatus === 'active' ? '🔥 진행중' : '🛑 종료됨'}
             </div>
           </div>
           <button onClick={handleLogout} style={{ background: 'transparent', color: '#94a3b8', border: '1px solid #94a3b8', borderRadius: '6px', fontSize: '0.75rem', padding: '4px 8px', cursor: 'pointer' }}>
@@ -778,38 +865,51 @@ function StudentView() {
             👨‍🏫 교 탁
           </div>
 
-          {gridSeats.map((seat) => (
-            <div key={seat.id} className={`student-desk ${seat.realName === realName ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
-                 style={{ 
-                   gridColumn: seat.c,
-                   gridRow: seat.r + 1, 
-                   background: seat.realName === realName ? '#eef2ff' : 'white',
-                   border: `2px solid ${seat.realName === realName ? '#4f46e5' : '#cbd5e1'}`,
-                   borderRadius: '10px', padding: '10px 5px', textAlign: 'center', cursor: 'pointer',
-                   boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
-                   display: 'flex', flexDirection: 'column', justifyContent: 'center'
-                 }}>
-              <div style={{ fontSize: `${0.7 * fontScale}rem`, color: '#94a3b8', fontWeight: 'bold', marginBottom: '6px' }}>
-                #{seat.id + 1}
+          {gridSeats.map((seat) => {
+            const remain = getRemain(seat);
+            const locked = isSeatLocked(seat);
+            const isMine = seat.realName === realName;
+
+            return (
+              <div key={seat.id} className={`student-desk ${isMine ? 'my-seat' : ''}`} onClick={() => openBidModal(seat)}
+                   style={{ 
+                     gridColumn: seat.c,
+                     gridRow: seat.r + 1, 
+                     background: locked ? '#f1f5f9' : (isMine ? '#eef2ff' : 'white'),
+                     border: `2px solid ${locked ? '#94a3b8' : (isMine ? '#4f46e5' : '#cbd5e1')}`,
+                     borderRadius: '10px', padding: '10px 5px', textAlign: 'center', cursor: locked ? 'not-allowed' : 'pointer',
+                     boxShadow: '0 2px 4px rgba(0,0,0,0.05)',
+                     opacity: locked ? 0.7 : 1,
+                     display: 'flex', flexDirection: 'column', justifyContent: 'center'
+                   }}>
+                <div style={{ fontSize: `${0.7 * fontScale}rem`, color: '#94a3b8', fontWeight: 'bold', marginBottom: '6px' }}>
+                  #{seat.id + 1}
+                </div>
+                
+                <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
+                   {!seat.realName 
+                     ? "입찰가능" 
+                     : (auctionStatus === 'ended' || seat.isFixed 
+                         ? seat.realName 
+                         : (isMine 
+                             ? <>{seat.nickname}<br/><span style={{fontSize: '0.8em', color: '#4f46e5'}}>({realName})</span></> 
+                             : seat.nickname)
+                       )
+                   }
+                </div>
+                
+                <div style={{ fontSize: `${1.0 * fontScale}rem`, fontWeight: '800', color: '#ef4444' }}>
+                  {!seat.realName ? `${seat.bid}P` : (seat.bid === 0 ? "랜덤" : seat.bid + "P")}
+                </div>
+
+                {auctionStatus === 'active' && seat.endTime && (
+                  <div style={{ fontSize: `${0.75 * fontScale}rem`, fontWeight: '800', marginTop: '4px', color: locked ? '#16a34a' : (remain <= ANTI_SNIPE_MS * 1000 ? '#ef4444' : '#64748b') }}>
+                    {locked ? '🔒 마감' : `⏱️ ${formatTime(remain)}`}
+                  </div>
+                )}
               </div>
-              
-              <div style={{ fontSize: `${1.1 * fontScale}rem`, fontWeight: '900', color: '#1e293b', marginBottom: '6px', wordBreak: 'keep-all', lineHeight: '1.2' }}>
-                 {!seat.realName 
-                   ? "입찰가능" 
-                   : (auctionStatus === 'ended' || seat.isFixed 
-                       ? seat.realName 
-                       : (seat.realName === realName 
-                           ? <>{seat.nickname}<br/><span style={{fontSize: '0.8em', color: '#4f46e5'}}>({realName})</span></> 
-                           : seat.nickname)
-                     )
-                 }
-              </div>
-              
-              <div style={{ fontSize: `${1.0 * fontScale}rem`, fontWeight: '800', color: '#ef4444' }}>
-                {!seat.realName ? `${seat.bid}P` : (seat.bid === 0 ? "랜덤" : seat.bid + "P")}
-              </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -820,8 +920,9 @@ function StudentView() {
             
             <ol style={{ textAlign: 'left', lineHeight: '1.6', color: '#334155', paddingLeft: '20px', marginBottom: '25px', fontSize: '0.95rem' }}>
               <li style={{ marginBottom: '10px' }}>좌측 상단의 별명 옆에 <strong>자신의 이름이 정확히 뜨는지</strong> 확인하세요.</li>
-              <li style={{ marginBottom: '10px' }}>경매 입찰 가능 횟수는 <strong style={{ color: '#ef4444', fontSize: '1.2em' }}>'5회'</strong>입니다. 이 외에 참가는 불가합니다. (취소해도 횟수 차감)</li>
-              <li style={{ marginBottom: '10px' }}>경매 <strong>가능 시간(타이머)</strong>을 보시고 주의해서 진행하세요.</li>
+              <li style={{ marginBottom: '10px' }}>경매 입찰 가능 횟수는 <strong style={{ color: '#ef4444', fontSize: '1.2em' }}>좌석 1개당 '{MAX_BIDS_PER_SEAT}회'</strong>입니다. (취소해도 횟수 차감)</li>
+              <li style={{ marginBottom: '10px' }}>각 좌석은 <strong>독립적인 타이머</strong>가 흐르며, <strong>마감 5초 전</strong>에 입찰하면 그 좌석만 5초가 다시 늘어납니다.</li>
+              <li style={{ marginBottom: '10px' }}>좌석 타이머가 <strong>0초가 되면 그 좌석은 잠겨</strong> 더 이상 입찰할 수 없습니다.</li>
               <li style={{ marginBottom: '10px' }}>이번에 입찰한 자리의 금액이 <strong>다음 입찰의 최소 금액</strong>이 됩니다.</li>
               <li>주인이 정해지지 않은 자리는 선생님이 설정한 <strong>최소 금액(기본 900P)</strong>부터 시작됩니다.</li>
             </ol>
@@ -836,15 +937,15 @@ function StudentView() {
         </div>
       )}
 
-      {biddingSeat && (
+      {biddingSeat && liveBiddingSeat && (
         <div className="auction-overlay" style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, background: 'rgba(0,0,0,0.6)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 100 }}>
           <div className="auction-modal" style={{ background: 'white', width: '90%', maxWidth: '400px', padding: '1.5rem', borderRadius: '20px', textAlign: 'center' }}>
-            <h2 className="auction-title">🪑 좌석 #{biddingSeat.id + 1} 입찰</h2>
+            <h2 className="auction-title">🪑 좌석 #{liveBiddingSeat.id + 1} 입찰</h2>
             <p style={{fontSize: '0.85rem', color: '#64748b', marginTop: '5px'}}>다른 자리를 선택하면 기존 입찰은 취소됩니다.</p>
             
             <div className="bid-section" style={{ padding: '1rem', marginTop: '10px', background: '#f8fafc', borderRadius: '12px' }}>
               <span className="bid-label" style={{ display: 'block', marginBottom: '10px', color: '#ef4444', fontWeight: 'bold' }}>
-                ⚠️ 신중하게 입찰하세요! (남은 입찰: {Math.max(0, 5 - bidCount)}회)
+                ⚠️ 신중하게 입찰하세요! (이 좌석 남은 입찰: {Math.max(0, MAX_BIDS_PER_SEAT - liveBiddingUsedCount)}회)
               </span>
               <span className="bid-label" style={{ display: 'block', marginBottom: '10px', color: '#64748b' }}>내가 베팅할 금액 (보유: {myPoints}P)</span>
               
@@ -858,16 +959,27 @@ function StudentView() {
                 <button onClick={() => setTempBid(p => p + 1000)} style={{ flex: 1, padding: '12px 0', fontSize: '1.1rem', fontWeight: 'bold', borderRadius: '8px', border: '1px solid #cbd5e1', background: 'white' }}>+ 1000</button>
               </div>
               
-              <button onClick={() => setTempBid(!biddingSeat.realName && biddingSeat.bid === (biddingSeat.baseBid || 900) ? (biddingSeat.baseBid || 900) + 100 : biddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
+              <button onClick={() => setTempBid(!liveBiddingSeat.realName && liveBiddingSeat.bid === (liveBiddingSeat.baseBid || 900) ? (liveBiddingSeat.baseBid || 900) + 100 : liveBiddingSeat.bid + 100)} style={{ marginTop: '15px', border: 'none', background: 'transparent', color: '#64748b', textDecoration: 'underline', cursor: 'pointer' }}>
                 금액 다시 입력하기
               </button>
+
+              {(() => {
+                const remain = getRemain(liveBiddingSeat);
+                if (remain === null) return null;
+                return (
+                  <div style={{ marginTop: '12px', fontSize: '0.85rem', fontWeight: 800, color: remain <= ANTI_SNIPE_MS ? '#ef4444' : '#64748b' }}>
+                    ⏱️ 이 좌석 남은 시간: {formatTime(remain)}
+                    {remain <= ANTI_SNIPE_MS && " (지금 입찰하면 5초 연장!)"}
+                  </div>
+                );
+              })()}
             </div>
 
             <button onClick={confirmBid} style={{ width: '100%', padding: '16px', background: tempBid > myPoints ? '#94a3b8' : '#4f46e5', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: '800', marginTop: '15px', cursor: tempBid > myPoints ? 'not-allowed' : 'pointer' }}>
               {tempBid > myPoints ? "포인트 부족 🚫" : `✅ ${tempBid}P로 입찰 확정!`}
             </button>
 
-            {biddingSeat.realName === realName && (
+            {liveBiddingSeat.realName === realName && (
               <button onClick={handleCancelBid} style={{ width: '100%', padding: '16px', background: '#ef4444', color: 'white', border: 'none', borderRadius: '12px', fontSize: '1.2rem', fontWeight: '800', marginTop: '10px', cursor: 'pointer' }}>
                 ❌ 내 입찰 취소하기
               </button>
